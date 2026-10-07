@@ -1,0 +1,136 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "metadata-asf"
+dynamic = ["version"]
+description = "Python library and CLI to collect ASF (Alaska Satellite Facility) SAR metadata as daily Parquet catalogs."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "umr-lops", email = "antoine.grouazel@ifremer.fr" }]
+keywords = [
+  "ASF",
+  "SAR",
+  "NISAR",
+  "metadata",
+  "Parquet",
+  "ocean",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Operating System :: OS Independent",
+  "Topic :: Scientific/Engineering",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+requires-python = ">=3.10"
+
+dependencies = [
+  "asf_search",
+  "pandas",
+  "pyarrow",
+  "pydantic>=2",
+  "pyyaml",
+  "tqdm",
+  "shapely",
+  "tenacity",
+]
+
+[project.optional-dependencies]
+dev = [
+  "black",
+  "mypy",
+  "pre-commit",
+  "pytest",
+  "pytest-cov",
+  "ruff",
+]
+docs = [
+  "sphinx>=4.5",
+  "sphinx-rtd-theme[sphinx]",
+]
+
+[project.urls]
+repository = "https://github.com/umr-lops/metadata-asf"
+homepage = "https://github.com/umr-lops/metadata-asf"
+
+[project.scripts]
+metadata-asf = "metadata_asf.cli:main"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/metadata_asf/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/metadata_asf"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "README.md"]
+
+[tool.black]
+target-version = ["py310"]
+line-length = 100
+extend-exclude = '''
+/(
+    \.git
+    | \.mypy_cache
+    | \.ruff_cache
+    | build
+    | dist
+)
+| src/metadata_asf/_version\.py
+'''
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = [".git", ".mypy_cache", "build", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.10"
+mypy_path = "src"
+packages = ["metadata_asf"]
+pretty = true
+show_traceback = true
+allow_redefinition = false
+check_untyped_defs = true
+disallow_any_generics = true
+disallow_incomplete_defs = true
+ignore_missing_imports = true
+implicit_reexport = false
+no_implicit_optional = true
+show_column_numbers = true
+show_error_codes = true
+strict_equality = true
+strict_optional = true
+warn_no_return = true
+warn_redundant_casts = true
+warn_return_any = true
+warn_unreachable = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers --tb=short --cov=metadata_asf"
+markers = [
+  "integration: real calls to the ASF API (deselected by default, run with '-m integration')",
+]
+
+[tool.coverage.run]
+branch = true
+omit = ["src/metadata_asf/_version.py"]
+
+[tool.coverage.report]
+# Final target is 80% (AGENTS.md step 8); lowered to 0 while stubs are still being implemented.
+fail_under = 0
+show_missing = true
+

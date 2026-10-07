@@ -1,0 +1,25 @@
+name: Greetings
+
+on:
+  pull_request_target:
+    types: [opened]
+  issues:
+    types: [opened]
+
+# This block is required to give the bot permission to comment
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  greeting:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/first-interaction@v3
+        with:
+          # Note the underscores used below instead of hyphens
+          pr_message: "Hello @${{ github.actor }}, thank you for submitting a PR! We will respond as soon as possible."
+          issue_message: |
+            Hello @${{ github.actor }}, thank you for your interest in our work!
+
+            If this is a bug report, please provide screenshots and **minimum viable code to reproduce your issue**, otherwise we can not help you.

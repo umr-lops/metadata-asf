@@ -1,0 +1,23 @@
+default_stages: [pre-commit, pre-push]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-docstring-first
+      - id: check-yaml
+      - id: check-toml
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.5
+    hooks:
+      - id: ruff
+        args: [--fix]
+  - repo: https://github.com/psf/black-pre-commit-mirror
+    rev: 26.1.0
+    hooks:
+      - id: black
+
+ci:
+  autoupdate_schedule: monthly

@@ -1,0 +1,8 @@
+mission: NISAR
+output_dir: /data/nisar_ocean
+log_level: INFO
+date_range: ["2025-01-01", "2025-01-31"]
+ocean_wkt: >
+  POLYGON((-180 -90, 180 -90, 180 90, -180 90, -180 -90))
+processing_levels: ["RSLC", "GSLC"]
+max_results: 10000
