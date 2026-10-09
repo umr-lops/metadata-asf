@@ -1,0 +1,25 @@
+# Read the Docs (RTD) build configuration, format v2.
+# Docs: https://docs.readthedocs.io/en/stable/config-file/v2.html
+#
+# The build installs the package (and the `docs` extra that pulls in Sphinx +
+# sphinx_rtd_theme) and then runs Sphinx with docs/conf.py. autodoc imports
+# metadata_asf from src/ (conf.py adds it to sys.path), so the package must be
+# importable — installing it in the build env satisfies that and also lets the
+# hatch-vcs version resolve.
+version: 2
+
+build:
+  os: ubuntu-24.04
+  tools:
+    python: "3.12"
+
+sphinx:
+  builder: html
+  configuration: docs/conf.py
+
+python:
+  install:
+    - method: pip
+      path: .
+      extra_requirements:
+        - docs

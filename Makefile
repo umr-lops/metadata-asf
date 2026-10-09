@@ -41,7 +41,7 @@ lint: test check-codestyle mypy
 #* Documentation
 .PHONY: docs
 docs:
-	sphinx-build -b html docs docs/_build/html
+	$(MAKE) -C docs html
 
 #* Cleaning
 .PHONY: pycache-remove
