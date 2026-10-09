@@ -1,5 +1,10 @@
 # metadata-asf
 
+[![CI](https://github.com/umr-lops/metadata-asf/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/umr-lops/metadata-asf/actions/workflows/ci.yml?branch=develop)
+[![PyPI](https://img.shields.io/pypi/v/metadata-asf)](https://pypi.org/project/metadata-asf/)
+[![PyPI — Python versions](https://img.shields.io/pypi/pyversions/metadata-asf)](https://pypi.org/project/metadata-asf/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Python library and CLI to collect SAR acquisition **metadata** from the
 [ASF API](https://alaska.sciopssearch.asf.alaska.edu) (`asf_search`) and export it as
 **daily Parquet catalogs**.
