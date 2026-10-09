@@ -1,14 +1,19 @@
 name: Publish to PyPI
 
-# Publish a new distribution to PyPI on every push to the main branch.
-# Uses Trusted Publishing (OIDC) so no API token secret is stored in the
-# repo; the publisher must already be configured on the PyPI project
+# Publish a new distribution to PyPI only for stable CalVer release tags of the
+# form YYYY.M.D (e.g. 2026.9.14, the project's tagging convention).
+# The glob below is intentionally permissive; a guard step then rejects anything
+# that is not a strict 4-digit-year.month.day tag so a mistyped tag never
+# reaches PyPI.
+#
+# Uses Trusted Publishing (OIDC) so no API token secret is stored in the repo;
+# the publisher must already be configured on the PyPI project
 # (Settings -> Publishing -> Trusted publishers) for this repo+workflow.
 
 on:
   push:
-    branches:
-      - main
+    tags:
+      - "*.*.*"
 
 jobs:
   build:
@@ -20,6 +25,16 @@ jobs:
         with:
           # Full history so hatch-vcs can derive the version from git.
           fetch-depth: 0
+
+      - name: Validate stable tag
+        run: |
+          tag="$GITHUB_REF_NAME"
+          # CalVer: 4-digit year, month 1-12, day 1-31 (leading zeros optional).
+          if ! [[ "$tag" =~ ^[0-9]{4}\.(0?[1-9]|1[0-2])\.(0?[1-9]|[12][0-9]|3[01])$ ]]; then
+            echo "::error::Ref $GITHUB_REF_NAME is not a stable YYYY.M.D release tag; aborting."
+            exit 1
+          fi
+          echo "Publishing stable release $tag"
 
       - name: Set up Python
         uses: actions/setup-python@v7
