@@ -40,10 +40,12 @@ backend, version derived from the Git history via `hatch-vcs`, and an entry poin
 
 ## Usage
 
-### CLI
+### CLI — `harvest`
+
+Query the ASF API and write the daily Parquet catalogs:
 
 ```bash
-metadata-asf \
+metadata-asf harvest \
   --mission NISAR \
   --outputdir ./out \
   --log-verbosity INFO \
@@ -61,6 +63,28 @@ metadata-asf \
 
 Precedence is **CLI > `--conf` file > mission profile defaults**. See `config.example.yaml`
 for a complete working example.
+
+### CLI — `report`
+
+Render a self-contained HTML report on a directory of daily Parquet catalogs
+(read-only, no API calls, no JavaScript in the output):
+
+```bash
+metadata-asf report \
+  --catalogdir ./out \
+  --outputfile ./out/report.html
+```
+
+The report covers volume & completeness (records, daily files, span, missing/empty
+days), the product/instrument mix (platform, product type, level, beam, polarization)
+and footprint geometry quality (invalid / antimeridian / near-polar).
+
+| Option            | Required | Description                                                        |
+|-------------------|----------|--------------------------------------------------------------------|
+| `--catalogdir`    | yes      | Directory of daily Parquet files to report on.                     |
+| `--outputfile`    | no       | HTML report path (default: `catalog_report.html`).                 |
+| `--mission`       | no       | Mission label for the header (default: inferred from the data).    |
+| `--log-verbosity` | no       | `DEBUG`, `INFO`, `WARNING` or `ERROR` (default: `INFO`).            |
 
 ### Python API
 
