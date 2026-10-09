@@ -8,9 +8,8 @@
 # container can be invoked directly:
 #   apptainer run metadata-asf.sif --mission NISAR --outputdir /data --date 2026-10-01:2026-10-31
 
-BootScript: /etc/bash.bashrc
-
-From: docker://python:3.12-slim
+Bootstrap: docker
+From: python:3.12-slim
 
 %environment
 export PATH=/opt/conda/bin:$PATH
