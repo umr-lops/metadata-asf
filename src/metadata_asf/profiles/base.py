@@ -19,8 +19,12 @@ class MissionProfile:
             the catalog collects for this mission (case-sensitive, e.g. ``("L1", "RSLC")``).
         default_ocean_wkt: WKT used to filter acquisitions towards ocean areas;
             ``None`` means "no geographic filtering".
-        field_mapping: mapping between raw ASF product properties and the columns of
-            the normalized Parquet schema (see ``AGENTS.md`` section 2).
+        field_mapping: mapping from normalized Parquet schema columns to the raw
+            property name(s) of an ``ASFProduct.properties`` dict. A column may list
+            several source properties (their values are merged in
+            :mod:`metadata_asf.extract`, e.g. NISAR polarization spread over
+            ``mainBandPolarization`` and ``sideBandPolarization``). The ``geometry``
+            column is never mapped: it is read structurally from ``product.geometry``.
     """
 
     def __init__(
@@ -29,13 +33,15 @@ class MissionProfile:
         asf_dataset: str,
         supported_products: list[tuple[str, str]],
         default_ocean_wkt: str | None = None,
-        field_mapping: dict[str, str] | None = None,
+        field_mapping: dict[str, list[str]] | None = None,
     ) -> None:
         self.name = name
         self.asf_dataset = asf_dataset
         self.supported_products = list(supported_products)
         self.default_ocean_wkt = default_ocean_wkt
-        self.field_mapping = field_mapping or {}
+        self.field_mapping = {
+            column: list(properties) for column, properties in (field_mapping or {}).items()
+        }
 
 
 __all__ = ["MissionProfile"]

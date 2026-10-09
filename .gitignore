@@ -619,3 +619,6 @@ readmes1ifr_integration.txt
 
 # hatchling versioning files
 _version.py
+
+# opencode agent local plans
+.opencode/
