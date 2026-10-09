@@ -20,6 +20,10 @@ depends only on the symbols documented here; their stability is governed by SemV
    :members:
    :undoc-members:
 
+.. automodule:: metadata_asf.report
+   :members:
+   :undoc-members:
+
 .. automodule:: metadata_asf.config
    :members:
    :undoc-members:

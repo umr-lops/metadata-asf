@@ -41,9 +41,16 @@ Python >= 3.10 is required.
 CLI usage
 ---------
 
+The ``metadata-asf`` command has two subcommands: ``harvest`` (query the ASF API
+and write the daily Parquet catalogs) and ``report`` (render an HTML report on an
+existing catalog).
+
+Harvest
+~~~~~~~
+
 .. code-block:: bash
 
-   metadata-asf \
+   metadata-asf harvest \
      --mission NISAR \
      --outputdir ./out \
      --log-verbosity INFO \
@@ -61,6 +68,29 @@ Option           Required  Description
 ===============  ========  =====================================================
 
 Precedence is **CLI > ``--conf`` file > mission profile defaults**.
+
+Report
+~~~~~~
+
+.. code-block:: bash
+
+   metadata-asf report \
+     --catalogdir ./out \
+     --outputfile ./out/report.html \
+     --log-verbosity INFO
+
+===============  ========  =====================================================
+Option           Required  Description
+===============  ========  =====================================================
+--catalogdir      yes      Directory of daily Parquet files to report on
+--outputfile      no       HTML report path (default: catalog_report.html)
+--mission         no       Mission label for the header (default: inferred)
+--log-verbosity   no       DEBUG, INFO, WARNING or ERROR (default INFO)
+===============  ========  =====================================================
+
+The report is a single self-contained HTML file (inline CSS, no JavaScript, no
+external assets) covering volume and completeness, the product/instrument mix, and
+footprint geometry quality. It is read-only and makes no API calls.
 
 Python API
 ----------

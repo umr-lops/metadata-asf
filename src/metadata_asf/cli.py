@@ -1,4 +1,14 @@
-"""Command-line interface for metadata-asf."""
+"""Command-line interface for metadata-asf.
+
+Two subcommands share the single ``metadata-asf`` console script:
+
+* ``harvest`` — query the ASF API and write daily Parquet catalogs (the original behaviour);
+* ``report`` — read a directory of daily Parquet catalogs and render a self-contained HTML
+  report on the available metadata (no API calls, no downloads).
+
+Exit codes follow AGENTS.md section 7: ``0`` success, ``1`` a runtime error, ``2`` invalid
+usage (bad arguments, unknown mission, missing input, ...).
+"""
 
 from __future__ import annotations
 
@@ -12,7 +22,7 @@ import pandas as pd
 from pydantic import ValidationError
 
 from metadata_asf import config as config_module
-from metadata_asf import export, extract
+from metadata_asf import export, extract, report
 from metadata_asf import search as search_module
 from metadata_asf.profiles import UnknownMissionError, get_profile
 from metadata_asf.utils import parse_date, setup_logging
@@ -21,47 +31,139 @@ logger = logging.getLogger(__name__)
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the argument parser.
+    """Build the top-level parser with the ``harvest`` and ``report`` subcommands.
 
     Returns:
-        Parser implementing the documented flags (--mission, --outputdir, --log-verbosity,
-        --date, --conf); see AGENTS.md section 4 for each option's meaning and default value.
+        The argument parser. ``harvest`` reproduces the pre-subcommand flags
+        (``--mission``, ``--outputdir``, ``--log-verbosity``, ``--date``, ``--conf``);
+        ``report`` adds ``--catalogdir`` (required) and ``--outputfile``.
 
     Note:
-        Options that also exist in a ``--conf`` file default to ``None`` (not to their
+        Options that can also come from a ``--conf`` file default to ``None`` (not to their
         documented fallback) so that only the values the user actually typed override the
         file; the documented defaults then come from the file or the mission profile.
     """
     parser = argparse.ArgumentParser(
         prog="metadata-asf",
-        description="Collect ASF SAR metadata as daily Parquet catalogs.",
+        description="Collect ASF SAR metadata as daily Parquet catalogs and report on them.",
     )
-    parser.add_argument("--mission", default=None, help="Target mission (default: NISAR).")
-    parser.add_argument(
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    harvest = subparsers.add_parser(
+        "harvest",
+        help="Query the ASF API and write daily Parquet catalogs.",
+        description="Query the ASF API and write daily Parquet catalogs.",
+    )
+    _add_harvest_args(harvest)
+
+    rep = subparsers.add_parser(
+        "report",
+        help="Render an HTML report on a directory of daily Parquet catalogs.",
+        description="Render a self-contained HTML report on a directory of daily Parquet "
+        "catalogs (read-only, no API calls).",
+    )
+    rep.add_argument(
+        "--catalogdir",
+        type=Path,
+        required=True,
+        help="Directory holding the daily Parquet files to report on.",
+    )
+    rep.add_argument(
+        "--outputfile",
+        type=Path,
+        default=Path("catalog_report.html"),
+        help="Path of the HTML report to write (default: catalog_report.html).",
+    )
+    rep.add_argument(
+        "--mission",
+        default=None,
+        help="Mission label for the report header (default: inferred from the data).",
+    )
+    _add_log_verbosity(rep)
+
+    return parser
+
+
+def _add_harvest_args(sub: argparse.ArgumentParser) -> None:
+    """Register the harvest options on a (sub)parser."""
+    sub.add_argument("--mission", default=None, help="Target mission (default: NISAR).")
+    sub.add_argument(
         "--outputdir",
         type=Path,
         required=True,
         help="Directory the daily Parquet files are written to.",
     )
-    parser.add_argument(
+    _add_log_verbosity(sub)
+    sub.add_argument(
+        "--date",
+        default=None,
+        help="Acquisition window: YYYY-MM-DD or YYYY-MM-DD:YYYY-MM-DD.",
+    )
+    sub.add_argument("--conf", type=Path, default=None, help="YAML configuration file.")
+
+
+def _add_log_verbosity(sub: argparse.ArgumentParser) -> None:
+    """Register the shared ``--log-verbosity`` flag on a (sub)parser."""
+    sub.add_argument(
         "--log-verbosity",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         default=None,
         help="Logging verbosity (default: INFO).",
     )
-    parser.add_argument(
-        "--date",
-        default=None,
-        help="Acquisition window: YYYY-MM-DD or YYYY-MM-DD:YYYY-MM-DD.",
-    )
-    parser.add_argument("--conf", type=Path, default=None, help="YAML configuration file.")
-    return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     """Entry point of the ``metadata-asf`` console script.
 
-    Orchestrates one full run in this order (flow diagram: AGENTS.md section 11):
+    Dispatches on the first positional token to :func:`run_harvest` or :func:`run_report`.
+
+    Args:
+        argv: command-line tokens (defaults to ``sys.argv[1:]``); injected in tests.
+
+    Returns:
+        Process exit code per AGENTS.md section 7: ``0`` on success (a harvest that matched
+        no product at all is legitimate and only logs a warning); ``1`` on a runtime error in
+        search, extraction, export or report generation; ``2`` for invalid usage such as bad
+        date syntax, an unknown mission or a missing catalog directory.
+    """
+    args = build_parser().parse_args(argv)
+    if args.command == "report":
+        return run_report(args)
+    return run_harvest(args)
+
+
+def run_report(args: argparse.Namespace) -> int:
+    """Generate the HTML report from a catalog directory.
+
+    Args:
+        args: the parsed ``report`` subcommand namespace (``catalogdir``, ``outputfile``,
+            ``mission``, ``log_verbosity``).
+
+    Returns:
+        ``0`` on success; ``2`` if the catalog directory is missing or holds no Parquet file
+        (a usage error — the user pointed at the wrong place); ``1`` on a genuine read error.
+    """
+    setup_logging(args.log_verbosity or "INFO")
+    try:
+        report.write_report(
+            args.catalogdir,
+            args.outputfile,
+            mission=args.mission,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        # Missing directory or no Parquet file: the caller pointed at the wrong place.
+        logger.error("%s", exc)
+        return 2
+    except OSError as exc:
+        logger.error("Report generation failed: %s", exc)
+        return 1
+    return 0
+
+
+def run_harvest(args: argparse.Namespace) -> int:
+    """Run a full harvest: search, extract and write the daily Parquet catalogs.
+
+    Orchestrates one run in this order (flow diagram: AGENTS.md section 11):
         - parse CLI plus conf, then resolve the mission profile;
         - configure logging;
         - run the ASF search over the requested window;
@@ -69,19 +171,15 @@ def main(argv: list[str] | None = None) -> int:
         - write the daily Parquet files and log the final summary.
 
     Args:
-        argv: command-line tokens (defaults to ``sys.argv[1:]``); injected in tests.
+        args: the parsed ``harvest`` subcommand namespace (``mission``, ``outputdir``,
+            ``log_verbosity``, ``date``, ``conf``).
 
     Returns:
-        Process exit code per AGENTS.md section 7: ``0`` on success (a run that matched no
-        product at all is legitimate and only logs a warning); ``1`` when any error hits search,
-        extraction or export; ``2`` for invalid usage such as bad date syntax or unknown mission,
-        in which case the available missions are listed to help recover.
-
-    Raises:
-        SystemExit: never raised directly; argparse handles it itself for unrecognized flags.
+        ``0`` on success (a run that matched no product at all is legitimate and only logs a
+        warning); ``1`` when any error hits search, extraction or export; ``2`` for invalid
+        usage such as bad date syntax or unknown mission, in which case the available
+        missions are listed to help recover.
     """
-    args = build_parser().parse_args(argv)
-
     setup_logging(args.log_verbosity or "INFO")
 
     try:
@@ -199,4 +297,12 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 
-__all__ = ["build_parser", "export", "extract", "main", "search_module"]
+__all__ = [
+    "build_parser",
+    "export",
+    "extract",
+    "main",
+    "run_harvest",
+    "run_report",
+    "search_module",
+]

@@ -71,7 +71,15 @@ def test_success_returns_zero_and_runs_all_stages(
     calls = _stub_stages(monkeypatch)
     out = tmp_path / "out"
     rc = cli.main(
-        ["--mission", "NISAR", "--outputdir", str(out), "--date", "2025-01-01:2025-01-31"]
+        [
+            "harvest",
+            "--mission",
+            "NISAR",
+            "--outputdir",
+            str(out),
+            "--date",
+            "2025-01-01:2025-01-31",
+        ]
     )
     assert rc == 0
     assert out.exists()
@@ -91,7 +99,7 @@ def test_no_result_returns_zero_without_writing(
 
     monkeypatch.setattr(cli.extract, "to_dataframe", boom_to_dataframe)
     monkeypatch.setattr(cli.export, "write_daily_parquet", lambda *a, **k: [])
-    rc = cli.main(["--outputdir", str(tmp_path), "--date", "2025-01-01"])
+    rc = cli.main(["harvest", "--outputdir", str(tmp_path), "--date", "2025-01-01"])
     assert rc == 0
     # setup_logging streams to stdout; the empty-result warning must be logged there.
     assert "No NISAR acquisition" in capsys.readouterr().out
@@ -102,7 +110,7 @@ def test_search_error_returns_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         raise RuntimeError("cmr exploded")
 
     monkeypatch.setattr(cli.search_module, "search", failing_search)
-    rc = cli.main(["--outputdir", str(tmp_path), "--date", "2025-01-01"])
+    rc = cli.main(["harvest", "--outputdir", str(tmp_path), "--date", "2025-01-01"])
     assert rc == 1
 
 
@@ -113,7 +121,7 @@ def test_extraction_error_returns_one(tmp_path: Path, monkeypatch: pytest.Monkey
         raise ValueError("bad field")
 
     monkeypatch.setattr(cli.extract, "to_dataframe", failing_extract)
-    rc = cli.main(["--outputdir", str(tmp_path), "--date", "2025-01-01"])
+    rc = cli.main(["harvest", "--outputdir", str(tmp_path), "--date", "2025-01-01"])
     assert rc == 1
 
 
@@ -124,7 +132,7 @@ def test_export_error_returns_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         raise OSError("disk full")
 
     monkeypatch.setattr(cli.export, "write_daily_parquet", failing_write)
-    rc = cli.main(["--outputdir", str(tmp_path), "--date", "2025-01-01"])
+    rc = cli.main(["harvest", "--outputdir", str(tmp_path), "--date", "2025-01-01"])
     assert rc == 1
 
 
@@ -132,7 +140,17 @@ def test_unknown_mission_returns_two_and_lists(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _stub_stages(monkeypatch)
-    rc = cli.main(["--mission", "SENTINEL-1", "--outputdir", str(tmp_path), "--date", "2025-01-01"])
+    rc = cli.main(
+        [
+            "harvest",
+            "--mission",
+            "SENTINEL-1",
+            "--outputdir",
+            str(tmp_path),
+            "--date",
+            "2025-01-01",
+        ]
+    )
     assert rc == 2
     out = capsys.readouterr().out
     assert "Unknown mission" in out
@@ -141,13 +159,13 @@ def test_unknown_mission_returns_two_and_lists(
 
 def test_bad_date_returns_two(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _stub_stages(monkeypatch)
-    rc = cli.main(["--outputdir", str(tmp_path), "--date", "2025-01-31:2025-01-01"])
+    rc = cli.main(["harvest", "--outputdir", str(tmp_path), "--date", "2025-01-31:2025-01-01"])
     assert rc == 2
 
 
 def test_missing_date_returns_two(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _stub_stages(monkeypatch)
-    rc = cli.main(["--outputdir", str(tmp_path)])
+    rc = cli.main(["harvest", "--outputdir", str(tmp_path)])
     assert rc == 2
 
 
@@ -159,7 +177,7 @@ def test_conf_file_provides_window(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         encoding="utf-8",
     )
     out = tmp_path / "out"
-    rc = cli.main(["--outputdir", str(out), "--conf", str(conf)])
+    rc = cli.main(["harvest", "--outputdir", str(out), "--conf", str(conf)])
     assert rc == 0
     assert calls["search"]["start"] == _d(2025, 2, 1)
     assert calls["search"]["end"] == _d(2025, 2, 28)
@@ -174,7 +192,17 @@ def test_conf_file_beats_defaults_cli_beats_conf(
     conf.write_text('date_range: ["2025-02-01", "2025-02-28"]\nmax_results: 7\n', encoding="utf-8")
     out = tmp_path / "out"
     # CLI --date overrides the file window; the file max_results (7) survives.
-    rc = cli.main(["--outputdir", str(out), "--conf", str(conf), "--date", "2025-03-01:2025-03-02"])
+    rc = cli.main(
+        [
+            "harvest",
+            "--outputdir",
+            str(out),
+            "--conf",
+            str(conf),
+            "--date",
+            "2025-03-01:2025-03-02",
+        ]
+    )
     assert rc == 0
     assert calls["search"]["start"] == _d(2025, 3, 1)
     assert calls["search"]["end"] == _d(2025, 3, 2)
@@ -186,11 +214,63 @@ def test_single_date_becomes_one_day_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = _stub_stages(monkeypatch)
-    rc = cli.main(["--outputdir", str(tmp_path), "--date", "2025-05-10"])
+    rc = cli.main(["harvest", "--outputdir", str(tmp_path), "--date", "2025-05-10"])
     assert rc == 0
     assert calls["search"]["start"] == _d(2025, 5, 10)
     assert calls["search"]["end"] == _d(2025, 5, 10)
 
 
+def test_report_writes_html(tmp_path: Path) -> None:
+    catalog = tmp_path / "catalog"
+    _write_daily(catalog, days=["2025-01-01", "2025-01-02"])
+    out = tmp_path / "sub" / "report.html"
+    rc = cli.main(["report", "--catalogdir", str(catalog), "--outputfile", str(out)])
+    assert rc == 0
+    assert out.exists()
+    text = out.read_text(encoding="utf-8")
+    assert text.startswith("<!DOCTYPE html>")
+    assert "2" in text  # at least a couple of records reported
+
+
+def test_report_missing_catalogdir_returns_two(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc = cli.main(["report", "--catalogdir", str(tmp_path / "nope"), "--outputfile", "x.html"])
+    assert rc == 2
+    assert "not found" in capsys.readouterr().out
+
+
+def test_report_empty_dir_returns_two(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    rc = cli.main(["report", "--catalogdir", str(empty), "--outputfile", "x.html"])
+    assert rc == 2
+    assert "No *.parquet" in capsys.readouterr().out
+
+
 def _d(year: int, month: int, day: int) -> dt.date:
     return dt.date(year, month, day)
+
+
+def _write_daily(catalog: Path, days: list[str]) -> None:
+    """Write one tiny Parquet per day so the report has something to read."""
+    catalog.mkdir(parents=True, exist_ok=True)
+    for iso in days:
+        date = dt.date.fromisoformat(iso)
+        df = pd.DataFrame(
+            {
+                "granule_id": [f"g-{iso}"],
+                "platform": ["NISAR"],
+                "geometry": ["POLYGON((0 0,1 0,1 1,0 1,0 0))"],
+                "start_time": pd.to_datetime([iso + "T05:00:00"]).tz_localize("UTC"),
+                "stop_time": pd.to_datetime([iso + "T05:00:10"]).tz_localize("UTC"),
+                "polarization": [["HH"]],
+                "beam_mode": [None],
+                "product_type": ["RSLC"],
+                "processing_level": ["L1"],
+            }
+        )
+        df.to_parquet(catalog / f"NISAR_ocean_{date:%Y%m%d}.parquet", index=False)
+
+
+__all__ = ["FakeProduct"]
