@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
+
 import pytest
 
 from metadata_asf.profiles import MISSIONS, UnknownMissionError, get_profile
@@ -9,7 +11,7 @@ from metadata_asf.profiles.base import MissionProfile
 
 
 @pytest.fixture(name="clear_registry")
-def fixture_clear_registry() -> None:
+def fixture_clear_registry() -> Generator[None, None, None]:
     """Snapshot and restore the global registry so tests stay independent."""
     saved = dict(MISSIONS)
     yield

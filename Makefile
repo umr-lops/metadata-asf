@@ -33,7 +33,7 @@ check-codestyle:
 
 .PHONY: mypy
 mypy:
-	mypy --strict src/tests
+	mypy --strict src tests
 
 .PHONY: lint
 lint: test check-codestyle mypy

@@ -14,11 +14,12 @@ def parse_date(value: str) -> dt.date | tuple[dt.date, dt.date]:
         value: the raw ``--date`` token (single date or inclusive range).
 
     Returns:
-        For a single date, a :class:`datetime.date`; otherwise, an inclusive ``(start, end)`` pair of UTC days.
+        For a single date, a :class:`datetime.date`; otherwise, an inclusive ``(start, end)``
+        pair of UTC days.
 
     Raises:
-        ValueError: raised on malformed tokens; the message includes the offending token as-is so it can be
-            pasted verbatim into a bug report.
+        ValueError: raised on malformed tokens; the message includes the offending token as-is
+            so it can be pasted verbatim into a bug report.
     """
     parts = value.split(":")
     if len(parts) == 1:
@@ -51,8 +52,9 @@ def utc_datetime(value: dt.date | dt.datetime | str | None) -> dt.datetime | Non
         A timezone-aware datetime pinned to UTC, or ``None`` when the input was empty/``None``.
 
     Raises:
-        ValueError: when the value cannot be parsed into anything meaningful. Callers are expected to degrade
-            to an empty cell, never letting a single bad value abort a whole execution.
+        ValueError: when the value cannot be parsed into anything meaningful. Callers are
+            expected to degrade to an empty cell, never letting a single bad value abort a
+            whole execution.
     """
     if value is None:
         return None
@@ -113,8 +115,9 @@ def setup_logging(level: str) -> None:
     existing handlers are removed first, never stacked up on top of each other.
 
     Args:
-        level: one of ``DEBUG``, ``INFO``, ``WARNING``, ``ERROR`` — validated by the config layer above; an
-            unknown value simply falls back to INFO instead of aborting execution.
+        level: one of ``DEBUG``, ``INFO``, ``WARNING``, ``ERROR`` — validated by the config
+            layer above; an unknown value simply falls back to INFO instead of aborting
+            execution.
     """
     log_format = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
 

@@ -19,9 +19,7 @@ class UnknownMissionError(KeyError):
 
     def __init__(self, mission: str, available: list[str]) -> None:
         self.available = available
-        super().__init__(
-            f"Unknown mission {mission!r}. Available missions: {', '.join(available)}"
-        )
+        super().__init__(f"Unknown mission {mission!r}. Available missions: {', '.join(available)}")
 
 
 #: Registry of all available mission profiles. Adding a mission amounts to adding
