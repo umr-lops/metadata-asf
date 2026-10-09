@@ -27,11 +27,12 @@ def search(
 ) -> list[asf.ASFProduct]:
     """Search the ASF API for acquisitions of ``mission`` between two dates.
 
-    Thin wrapper over :func:`asf_search.search`. All mission-specific data — dataset name, product
-    levels, default ocean WKT — comes from the mission profile, and transient failures are retried with
-    exponential backoff. If the cap is reached exactly, the capped answer may have been truncated server-side
-    rather than genuinely complete: the same window is then re-run uncapped through
-    :func:`asf_search.search_generator` so no match escapes the catalog (AGENTS.md, sections 4 and 13).
+    Thin wrapper over :func:`asf_search.search`. All mission-specific data — dataset name,
+    product levels, default ocean WKT — comes from the mission profile, and transient failures
+    are retried with exponential backoff. If the cap is reached exactly, the capped answer may
+    have been truncated server-side rather than genuinely complete: the same window is then
+    re-run uncapped through :func:`asf_search.search_generator` so no match escapes the catalog
+    (AGENTS.md, sections 4 and 13).
 
     Args:
         mission: CLI identifier of the mission, e.g. ``"NISAR"``, which must be registered in
@@ -43,12 +44,13 @@ def search(
         max_results: hard cap on the number of products returned for a single capped API call.
 
     Returns:
-        Raw ASF product objects as built by ``asf_search``, not yet normalized. An empty list is a legitimate
-        answer, not an error.
+        Raw ASF product objects as built by ``asf_search``, not yet normalized. An empty list is
+        a legitimate answer, not an error.
 
     Raises:
-        UnknownMissionError: raised if ``mission`` has no registered profile. Once all retries are exhausted,
-            one exception from :data:`_RETRYABLE` is re-raised against the failed original call as-is.
+        UnknownMissionError: raised if ``mission`` has no registered profile. Once all retries
+            are exhausted, one exception from :data:`_RETRYABLE` is re-raised against the failed
+            original call as-is.
     """
     profile = get_profile(mission)
     options: dict[str, object] = {

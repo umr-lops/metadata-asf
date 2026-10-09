@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ValidationError
+from pydantic_core import PydanticCustomError
 
 logger = logging.getLogger(__name__)
 
@@ -56,16 +57,18 @@ def config_from_yaml(path: Path, **overrides: Any) -> Config:
     """Build a :class:`Config` from a YAML file with keyword overrides on top.
 
     Args:
-        path: YAML file to read; keys should mirror the model's own field names, unknown keys fail fast.
-        **overrides: explicit non-``None`` values (usually from the CLI) overriding one file entry at a time.
+        path: YAML file to read; keys mirror the model's own field names, unknown keys fail fast.
+        **overrides: explicit non-``None`` values (usually from the CLI) overriding one file
+            entry at a time.
 
     Returns:
         The merged, validated :class:`Config`.
 
     Raises:
         FileNotFoundError: if ``path`` does not exist.
-        pydantic.ValidationError: if required fields are missing or inconsistent, if any top-level key is
-            unknown here, or if the YAML document itself is not a mapping (scalar or list etc.).
+        pydantic.ValidationError: if required fields are missing or inconsistent, if any
+            top-level key is unknown here, or if the YAML document itself is not a mapping
+            (scalar or list etc.).
     """
     logger.debug("Building configuration from %s", path)
 
@@ -75,23 +78,37 @@ def config_from_yaml(path: Path, **overrides: Any) -> Config:
     if not isinstance(document, dict):
         raise ValidationError.from_exception_data(
             title=f"Config input ({path.name})",
-            errors=[{
-                "type": "dict_type",
-                "loc": (),
-                "msg": f"Top-level YAML document must be a mapping, got {type(document).__name__}",
-                "input": type(document).__name__,
-            }],
+            line_errors=[
+                {
+                    "type": PydanticCustomError(
+                        "config_input_not_mapping",
+                        "Top-level YAML document must be a mapping, got {document_type}",
+                        {"document_type": type(document).__name__},
+                    ),
+                    "input": document,
+                }
+            ],
         )
 
     unknown_keys = set(document) - set(Config.model_fields)
     if unknown_keys:
-        msg = (
-            f"Unrecognized top-level key(s) in {path.name}: {', '.join(sorted(unknown_keys))}; "
-            f"expected exactly one of: {', '.join(Config.model_fields)}"
-        )
         raise ValidationError.from_exception_data(
             title=f"Config input ({path.name})",
-            errors=[{"type": "extra_forbidden", "loc": (), "msg": msg, "input": document}],
+            line_errors=[
+                {
+                    "type": PydanticCustomError(
+                        "config_input_unknown_key",
+                        "Unrecognized top-level key(s) in {path}: {keys}; expected exactly one of: "
+                        "{expected}",
+                        {
+                            "path": path.name,
+                            "keys": ", ".join(sorted(unknown_keys)),
+                            "expected": ", ".join(Config.model_fields),
+                        },
+                    ),
+                    "input": document,
+                }
+            ],
         )
 
     merged_document = dict(document)
@@ -101,12 +118,9 @@ def config_from_yaml(path: Path, **overrides: Any) -> Config:
         if name in valid_keys and value is not None:
             merged_document[name] = value
 
-    try:
-        return Config(**merged_document)
-    except ValidationError as exc:
-        raise ValidationError.from_exception_data(
-            title=f"Config from {path.name}", errors=exc.errors()
-        ) from None
+    # Field-level failures surface as the model's own ValidationError (title "Config"),
+    # which already names the offending field and value.
+    return Config(**merged_document)
 
 
 __all__ = ["Config", "config_from_yaml"]
