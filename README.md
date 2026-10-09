@@ -1,6 +1,7 @@
 # metadata-asf
 
-[![CI](https://github.com/umr-lops/metadata-asf/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/umr-lops/metadata-asf/actions/workflows/ci.yml?branch=develop)
+[![CI](https://github.com/umr-lops/metadata-asf/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/umr-lops/metadata-asf/actions/workflows/ci.yml?branch=main)
+[![codecov](https://codecov.io/gh/umr-lops/metadata-asf/branch/main/graph/badge.svg)](https://codecov.io/gh/umr-lops/metadata-asf)
 [![PyPI](https://img.shields.io/pypi/v/metadata-asf)](https://pypi.org/project/metadata-asf/)
 [![PyPI — Python versions](https://img.shields.io/pypi/pyversions/metadata-asf)](https://pypi.org/project/metadata-asf/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
