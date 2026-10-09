@@ -21,29 +21,33 @@ class Config(BaseModel):
     ``AGENTS.md`` section 4: command-line options > values read from the ``--conf`` YAML file
     > defaults of the mission profile. Every field left unset falls back to those default
     values, except :attr:`output_dir` which has no sensible default and is always required.
-
-    Attributes:
-        mission: CLI identifier of the target mission (default ``"NISAR"``).
-        output_dir: where daily Parquet files are written; created if missing.
-        log_level: root logging level used across the run.
-        date_range: ``(start, end)`` acquisition window in UTC calendar days; ``None`` means no
-            explicit date filter from either source layer above it (CLI or file).
-        ocean_wkt: WKT to restrict acquisitions (ocean filter); falls back to the mission
-            profile's ``default_ocean_wkt`` when None.
-        processing_levels: optional restriction on which product types are collected;
-            falls back to every type supported by the mission profile.
-        max_results: hard cap of products per ASF API call.
     """
 
     model_config = {"frozen": True}
 
     mission: str = "NISAR"
+    """CLI identifier of the target mission (default ``"NISAR"``)."""
+
     output_dir: Path
+    """Where daily Parquet files are written; created if missing."""
+
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    """Root logging level used across the run."""
+
     date_range: tuple[dt.date, dt.date] | None = None
+    """``(start, end)`` acquisition window in UTC calendar days; ``None`` means no explicit
+    date filter from either source layer above it (CLI or file)."""
+
     ocean_wkt: str | None = None
+    """WKT to restrict acquisitions (ocean filter); falls back to the mission profile's
+    ``default_ocean_wkt`` when ``None``."""
+
     processing_levels: list[str] | None = None
+    """Optional restriction on which product types are collected; falls back to every type
+    supported by the mission profile."""
+
     max_results: int = 10_000
+    """Hard cap of products per ASF API call."""
 
     @property
     def mission_profile(self) -> Any:  # noqa: ANN401 - avoids a hard import cycle at module load.
