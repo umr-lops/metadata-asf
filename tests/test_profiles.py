@@ -38,14 +38,27 @@ def test_profile_copies_supported_products() -> None:
 
 
 def test_profile_field_mapping_provided() -> None:
-    """An explicit field mapping is stored verbatim."""
+    """An explicit field mapping is stored, one source property list per column."""
     prof = MissionProfile(
         name="NISAR",
         asf_dataset="NISAR",
         supported_products=[("L1", "RSLC")],
-        field_mapping={"platform": "producer"},
+        field_mapping={"platform": ["producer"], "polarization": ["p1", "p2"]},
     )
-    assert prof.field_mapping == {"platform": "producer"}
+    assert prof.field_mapping == {"platform": ["producer"], "polarization": ["p1", "p2"]}
+
+
+def test_profile_field_mapping_copies_lists() -> None:
+    """Callers can mutate the source lists after construction without side effects."""
+    props: list[str] = ["p1"]
+    prof = MissionProfile(
+        name="NISAR",
+        asf_dataset="NISAR",
+        supported_products=[("L1", "RSLC")],
+        field_mapping={"polarization": props},
+    )
+    props.append("p2")
+    assert prof.field_mapping["polarization"] == ["p1"]
 
 
 def test_registry_contains_nisar() -> None:

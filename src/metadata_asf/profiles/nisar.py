@@ -8,18 +8,21 @@ from metadata_asf.profiles.base import MissionProfile
 #: deliberate refinement (see ``AGENTS.md`` section 13 on land-vs-ocean filtering).
 _FULL_EARTH_WKT = "POLYGON((-180 -90, 180 -90, 180 90, -180 90, -180 -90))"
 
-#: Mapping between the normalized Parquet schema columns and the raw property names of
-#: an ``ASFProduct.properties`` dict (asf_search v14). The special case of the
-#: ``geometry`` column is handled structurally in :mod:`extract` via ``product.geometry``,
-#: not through this mapping.
-_NISAR_FIELD_MAPPING: dict[str, str] = {
-    "granule_id": "sceneName",
-    "platform": "platform",
-    "start_time": "startTime",
-    "stop_time": "stopTime",
-    "polarization": "polarization",
-    "beam_mode": "beamModeType",
-    "product_type": "processingLevel",  # ASF exposes e.g. RSLC / GSLC here for NISAR
+#: Mapping between the normalized Parquet schema columns and the raw property
+#: name(s) of an ``ASFProduct.properties`` dict (asf_search).
+#:
+#: NISAR quirk (verified against the live ASF API, 2026-10): the ``polarization``
+#: property is always ``None`` on NISAR RSLC/GSLC; the polarizations are carried
+#: separately in ``mainBandPolarization`` and ``sideBandPolarization``. The mapping
+#: therefore lists both, and :mod:`metadata_asf.extract` merges them. ``beamModeType``
+#: is intentionally NOT mapped: it is a Sentinel-1 concept and is ``None`` on NISAR.
+_NISAR_FIELD_MAPPING: dict[str, list[str]] = {
+    "granule_id": ["sceneName"],
+    "platform": ["platform"],
+    "start_time": ["startTime"],
+    "stop_time": ["stopTime"],
+    "polarization": ["mainBandPolarization", "sideBandPolarization"],
+    "product_type": ["processingLevel"],
 }
 
 

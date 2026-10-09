@@ -120,7 +120,7 @@ warn_unreachable = true
 warn_unused_configs = true
 
 [tool.pytest.ini_options]
-addopts = "--strict-markers --tb=short --cov=metadata_asf"
+addopts = "--strict-markers --tb=short --cov=metadata_asf -m 'not integration'"
 markers = [
   "integration: real calls to the ASF API (deselected by default, run with '-m integration')",
 ]
@@ -130,6 +130,5 @@ branch = true
 omit = ["src/metadata_asf/_version.py"]
 
 [tool.coverage.report]
-# Final target is 80% (AGENTS.md step 8); lowered to 0 while stubs are still being implemented.
-fail_under = 0
+fail_under = 80
 show_missing = true

@@ -24,6 +24,7 @@ def search(
     end: dt.date,
     intersects_with: str | None = None,
     max_results: int = 10_000,
+    product_types: list[str] | None = None,
 ) -> list[asf.ASFProduct]:
     """Search the ASF API for acquisitions of ``mission`` between two dates.
 
@@ -42,6 +43,8 @@ def search(
         intersects_with: WKT restricting to acquisitions that intersect this geometry; falls back to
             ``MissionProfile.default_ocean_wkt`` when `None`.
         max_results: hard cap on the number of products returned for a single capped API call.
+        product_types: optional restriction to a subset of the mission's supported product types
+            (e.g. ``["RSLC"]``); when `None` every supported type of the profile is searched.
 
     Returns:
         Raw ASF product objects as built by ``asf_search``, not yet normalized. An empty list is
@@ -53,9 +56,10 @@ def search(
             original call as-is.
     """
     profile = get_profile(mission)
+    requested = product_types or [ptype for _level, ptype in profile.supported_products]
     options: dict[str, object] = {
         "dataset": profile.asf_dataset,
-        "processingLevel": [product_type for _level, product_type in profile.supported_products],
+        "processingLevel": requested,
         "start": start.isoformat(),
         "end": end.isoformat(),
     }
