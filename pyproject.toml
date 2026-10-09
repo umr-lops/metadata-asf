@@ -133,4 +133,3 @@ omit = ["src/metadata_asf/_version.py"]
 # Final target is 80% (AGENTS.md step 8); lowered to 0 while stubs are still being implemented.
 fail_under = 0
 show_missing = true
-
