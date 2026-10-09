@@ -1,0 +1,54 @@
+# apptainer definition for metadata-asf.
+#
+# Usage (HPC / Airflow):
+#   apptainer build metadata-asf.sif apptainer.def
+#   apptainer exec metadata-asf.sif metadata-asf --help
+#
+# The runscript forwards every argument to the ``metadata-asf`` CLI, so the
+# container can be invoked directly:
+#   apptainer run metadata-asf.sif --mission NISAR --outputdir /data --date 2026-10-01:2026-10-31
+
+BootScript: /etc/bash.bashrc
+
+From: docker://python:3.12-slim
+
+%environment
+export PATH=/opt/conda/bin:$PATH
+export PYTHONPATH=/opt/conda/lib/python3.12/site-packages
+export PYTHONUNBUFFERED=1
+
+# hatch-vcs derives the package version from the git tag. The checkout baked
+# into the image has no .git history, so pin the version explicitly; override
+# at build time with:  apptainer build -e VERSION=2026.10.15 metadata-asf.sif apptainer.def
+export VERSION=${VERSION:-0.0.0+local}
+export SETUPTOOLS_SCM_PRETEND_VERSION=$VERSION
+
+%files
+./pyproject.toml /
+./README.md /
+./LICENSE /
+./config.example.yaml /
+./src /
+./assets /
+
+%post
+set -eux
+# Debian slim images ship no git (hatch-vcs fallback) and no compilers are
+# needed because all dependencies are pure-Python or ship wheels.
+python -m pip install --no-cache-dir --upgrade pip
+python -m pip install --no-cache-dir /
+
+%runscript
+exec metadata-asf "$@"
+
+%help
+metadata-asf container (issue #5)
+================================
+
+Collects ASF SAR metadata (NISAR RSLC/GSLC) and writes daily Parquet catalogs.
+
+  apptainer exec metadata-asf.sif metadata-asf --mission NISAR \
+      --outputdir /data/nisar --date 2026-10-01:2026-10-31
+
+The full CLI is documented in README.md; the entry point is
+``metadata_asf.cli:main``.

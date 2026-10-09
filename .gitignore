@@ -622,3 +622,6 @@ _version.py
 
 # opencode agent local plans
 .opencode/
+
+# Apptainer/Singularity container images
+*.sif
