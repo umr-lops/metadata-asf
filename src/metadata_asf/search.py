@@ -60,8 +60,12 @@ def search(
     options: dict[str, object] = {
         "dataset": profile.asf_dataset,
         "processingLevel": requested,
-        "start": start.isoformat(),
-        "end": end.isoformat(),
+        # asf_search's dateparser reads a bare "YYYY-MM-DD" as midnight UTC, so a single
+        # --date D would collapse to the empty window [D 00:00, D 00:00] and a range
+        # A:B would drop the end day. Anchor start to 00:00:00Z and end to 23:59:59Z so the
+        # window is inclusive on both ends of the calendar days (AGENTS.md section 4).
+        "start": _start_of_day(start),
+        "end": _end_of_day(end),
     }
     wkt = intersects_with or profile.default_ocean_wkt
     if wkt is not None:
@@ -80,6 +84,16 @@ def search(
 
     logger.info("ASF search %s (%s..%s): %d product(s)", mission, start, end, len(products))
     return list(products)
+
+
+def _start_of_day(day: dt.date) -> str:
+    """ISO-8601 UTC timestamp of the first instant of ``day`` (``YYYY-MM-DDT00:00:00Z``)."""
+    return f"{day:%Y-%m-%d}T00:00:00Z"
+
+
+def _end_of_day(day: dt.date) -> str:
+    """ISO-8601 UTC timestamp of the last full second of ``day`` (``YYYY-MM-DDT23:59:59Z``)."""
+    return f"{day:%Y-%m-%d}T23:59:59Z"
 
 
 def _capped_search(options: dict[str, object], *, max_results: int) -> list[asf.ASFProduct]:
