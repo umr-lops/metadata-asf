@@ -27,11 +27,44 @@ def test_profile_options_are_forwarded(monkeypatch: pytest.MonkeyPatch) -> None:
     kwargs = calls[0]
     assert kwargs["dataset"] == "NISAR"
     assert kwargs["processingLevel"] == ["RSLC", "GSLC"]
-    assert kwargs["start"] == "2025-01-01"
-    assert kwargs["end"] == "2025-01-31"
+    # Calendar days are sent as full UTC days: start at 00:00:00Z, end at 23:59:59Z.
+    assert kwargs["start"] == "2025-01-01T00:00:00Z"
+    assert kwargs["end"] == "2025-01-31T23:59:59Z"
     assert kwargs["maxResults"] == 10_000
     # The profile's default ocean WKT is used when no WKT is given explicitly.
     assert str(kwargs["intersectsWith"]).startswith("POLYGON")
+
+
+def test_single_day_is_a_full_24h_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A one-day window must span the whole day, not collapse to a zero-width midnight.
+
+    Regression: asf_search's dateparser reads a bare date as midnight, so sending
+    start=end=midnight made a single ``--date`` match nothing (see the Aug-2026 incident).
+    """
+    calls: list[dict[str, object]] = []
+
+    def fake_search(**kwargs: object) -> list[object]:
+        calls.append(kwargs)
+        return []
+
+    monkeypatch.setattr("asf_search.search", fake_search)
+    day = dt.date(2026, 8, 31)
+    search("NISAR", day, day)
+    assert calls[0]["start"] == "2026-08-31T00:00:00Z"
+    assert calls[0]["end"] == "2026-08-31T23:59:59Z"
+
+
+def test_range_is_inclusive_on_both_calendar_days(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_search(**kwargs: object) -> list[object]:
+        calls.append(kwargs)
+        return []
+
+    monkeypatch.setattr("asf_search.search", fake_search)
+    search("NISAR", dt.date(2025, 1, 1), dt.date(2025, 1, 31))
+    assert calls[0]["start"] == "2025-01-01T00:00:00Z"
+    assert calls[0]["end"] == "2025-01-31T23:59:59Z"
 
 
 def test_explicit_wkt_overrides_profile_default(monkeypatch: pytest.MonkeyPatch) -> None:
