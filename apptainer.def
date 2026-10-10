@@ -12,15 +12,7 @@ Bootstrap: docker
 From: python:3.12-slim
 
 %environment
-export PATH=/opt/conda/bin:$PATH
-export PYTHONPATH=/opt/conda/lib/python3.12/site-packages
 export PYTHONUNBUFFERED=1
-
-# hatch-vcs derives the package version from the git tag. The checkout baked
-# into the image has no .git history, so pin the version explicitly; override
-# at build time with:  apptainer build -e VERSION=2026.10.15 metadata-asf.sif apptainer.def
-export VERSION=${VERSION:-0.0.0+local}
-export SETUPTOOLS_SCM_PRETEND_VERSION=$VERSION
 
 %files
 ./pyproject.toml /
@@ -31,6 +23,10 @@ export SETUPTOOLS_SCM_PRETEND_VERSION=$VERSION
 ./assets /
 
 %post
+# hatch-vcs derives the package version from the git tag. The checkout baked
+# into the image has no .git history, so pin the version explicitly; override
+# at build time with:  apptainer build --set-env VERSION=2026.10.15 ...
+export SETUPTOOLS_SCM_PRETEND_VERSION=${SETUPTOOLS_SCM_PRETEND_VERSION:-0.0.0+local}
 set -eux
 # Debian slim images ship no git (hatch-vcs fallback) and no compilers are
 # needed because all dependencies are pure-Python or ship wheels.
