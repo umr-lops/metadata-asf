@@ -33,6 +33,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import shapely
+from matplotlib.lines import Line2D
 
 from metadata_asf.profiles import UnknownMissionError, get_profile
 
@@ -77,6 +78,8 @@ class CatalogStats:
     geom_antimeridian: int
     geom_near_polar: int
     geom_pole_1deg: int
+    geom_land: int
+    geom_ocean: int
 
 
 def analyze_catalog(catalog_dir: Path, *, mission: str | None = None) -> CatalogStats:
@@ -395,31 +398,31 @@ def _polarization_counts(frame: pd.DataFrame) -> list[tuple[str, int]]:
     return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
 
 
+def _empty_geom_stats(n: int) -> dict[str, int]:
+    """Zeroed geometry stats for a frame with no parseable footprints."""
+    return {
+        "geom_total": 0,
+        "geom_missing": n,
+        "geom_invalid": 0,
+        "geom_antimeridian": 0,
+        "geom_near_polar": 0,
+        "geom_pole_1deg": 0,
+        "geom_land": 0,
+        "geom_ocean": 0,
+    }
+
+
 def _geometry_quality(frame: pd.DataFrame) -> dict[str, int]:
     """Vectorized footprint quality counts over the ``geometry`` WKT column."""
     if frame.empty or "geometry" not in frame.columns:
-        return {
-            "geom_total": 0,
-            "geom_missing": int(len(frame)),
-            "geom_invalid": 0,
-            "geom_antimeridian": 0,
-            "geom_near_polar": 0,
-            "geom_pole_1deg": 0,
-        }
+        return _empty_geom_stats(len(frame))
 
     present = np.asarray(frame["geometry"].notna(), dtype=bool)
     try:
         geoms = shapely.from_wkt(np.asarray(frame["geometry"], dtype=object), on_invalid="ignore")
     except (ValueError, TypeError) as exc:
         logger.debug("Could not parse footprints for the report: %s", exc)
-        return {
-            "geom_total": 0,
-            "geom_missing": int(len(frame)),
-            "geom_invalid": 0,
-            "geom_antimeridian": 0,
-            "geom_near_polar": 0,
-            "geom_pole_1deg": 0,
-        }
+        return _empty_geom_stats(len(frame))
 
     geom_total = int(present.sum())
     geom_missing = int(len(frame)) - geom_total
@@ -436,6 +439,19 @@ def _geometry_quality(frame: pd.DataFrame) -> dict[str, int]:
     geom_near_polar = int((finite_lat & (max_polar > _NEAR_POLAR_LAT)).sum())
     geom_pole_1deg = int((finite_lat & (max_polar > _POLE_1DEG_LAT)).sum())
 
+    # Land vs ocean, judged by each valid footprint's centroid against the bundled land mask.
+    usable = present & validity
+    geom_land = geom_ocean = 0
+    land_union = _land_union()
+    if land_union is not None:
+        centroids = shapely.centroid(geoms)
+        cx = np.asarray(shapely.get_x(centroids))
+        cy = np.asarray(shapely.get_y(centroids))
+        usable = usable & np.isfinite(cx) & np.isfinite(cy)
+        on_land = np.asarray(shapely.contains(land_union, centroids), dtype=bool) & usable
+        geom_land = int(on_land.sum())
+        geom_ocean = int((usable & ~on_land).sum())
+
     return {
         "geom_total": geom_total,
         "geom_missing": geom_missing,
@@ -443,6 +459,8 @@ def _geometry_quality(frame: pd.DataFrame) -> dict[str, int]:
         "geom_antimeridian": geom_antimeridian,
         "geom_near_polar": geom_near_polar,
         "geom_pole_1deg": geom_pole_1deg,
+        "geom_land": geom_land,
+        "geom_ocean": geom_ocean,
     }
 
 
@@ -456,6 +474,39 @@ class _Completeness:
     mean_per_day: float
     median_per_day: float
     busiest_day: int
+
+
+# --- Beam/mode color coding (shared by the mix figure, the beam table, the map) -
+
+#: Distinct, colour-blind-friendly palette used to give every beam/mode a stable colour.
+_BEAM_PALETTE: tuple[str, ...] = (
+    "#2f6fed",  # blue
+    "#e67e22",  # orange
+    "#27ae60",  # green
+    "#c0392b",  # red
+    "#8e44ad",  # purple
+    "#16a085",  # teal
+    "#d35400",  # dark orange
+    "#2c3e50",  # slate
+    "#f1c40f",  # yellow
+    "#1abc9c",  # light teal
+)
+
+#: Colour used for a footprint whose beam/mode is empty or unknown.
+_BEAM_UNKNOWN: str = "#9aa5b1"
+
+
+def _beam_color_map(beam_mix: list[tuple[str, int]]) -> dict[str, str]:
+    """Assign each beam/mode label a stable colour (shared across figure, table and map).
+
+    Labels are ordered by descending count (the mix's own order) so the most common modes get
+    the first palette entries; the mapping is deterministic for a given catalog.
+    """
+    return {
+        label: _BEAM_PALETTE[index % len(_BEAM_PALETTE)]
+        for index, (label, _count) in enumerate(beam_mix)
+        if label and label != "(empty)"
+    }
 
 
 # --- Figure rendering (matplotlib, inlined as base64 PNG) --------------------
@@ -505,15 +556,20 @@ def _fig_volume(stats: CatalogStats) -> None:
 
 
 def _fig_mix(stats: CatalogStats) -> None:
-    """Side-by-side horizontal mix panels: product type, level, beam, polarization."""
+    """Side-by-side horizontal mix panels: product type, level, beam, polarization.
+
+    The beam/mode panel is colour-coded with the same palette used by the footprint map so a
+    mode's colour reads consistently across the figure, the beam table and the map.
+    """
+    beam_colors = _beam_color_map(stats.beam_mix)
     panels = [
-        ("Product type", stats.product_mix),
-        ("Processing level", stats.level_mix),
-        ("Beam / mode", stats.beam_mix),
-        ("Polarization", stats.polarization_mix),
+        ("Product type", stats.product_mix, None),
+        ("Processing level", stats.level_mix, None),
+        ("Beam / mode", stats.beam_mix, beam_colors),
+        ("Polarization", stats.polarization_mix, None),
     ]
     fig, axes = plt.subplots(1, len(panels), figsize=(15, 3.6), sharey=False)
-    for ax, (title, items) in zip(axes, panels, strict=True):
+    for ax, (title, items, colors) in zip(axes, panels, strict=True):
         items = items[:15]
         if not items:
             ax.axis("off")
@@ -521,7 +577,8 @@ def _fig_mix(stats: CatalogStats) -> None:
             continue
         labels = [label for label, _ in items][::-1]
         values = [n for _, n in items][::-1]
-        bars = ax.barh(labels, values, color="#2f6fed")
+        bar_colors = [(colors or {}).get(label, "#2f6fed") for label in labels]
+        bars = ax.barh(labels, values, color=bar_colors)
         total = sum(values)
         for bar, value in zip(bars, values, strict=True):
             ax.text(
@@ -532,7 +589,7 @@ def _fig_mix(stats: CatalogStats) -> None:
                 fontsize=8,
             )
         ax.set_title(title)
-        ax.margins(x=0.35)
+        ax.margins(x=0.45)
     fig.tight_layout()
 
 
@@ -576,6 +633,25 @@ def _land_polygons() -> list[_LandPoly]:
     return polygons
 
 
+#: A single merged land geometry (or ``None`` when unavailable), cached for point-in-land tests.
+_LAND_UNION: shapely.geometry.Polygon | shapely.geometry.MultiPolygon | None = None
+
+
+def _land_union() -> shapely.geometry.Polygon | shapely.geometry.MultiPolygon | None:
+    """The bundled land polygons merged into one geometry, cached on first use.
+
+    Returns ``None`` when the asset is missing/empty so callers can degrade to "no land/ocean
+    split" rather than failing the report.
+    """
+    global _LAND_UNION
+    if _LAND_UNION is None:
+        polygons = _land_polygons()
+        if polygons:
+            parts = [shapely.geometry.Polygon(outer, holes) for outer, holes in polygons]
+            _LAND_UNION = shapely.unary_union(parts)
+    return _LAND_UNION
+
+
 def _draw_land(ax: matplotlib.axes.Axes, ocean: str, land: str, coast: str) -> None:
     """Fill land polygons and stroke their coastlines on ``ax`` (ocean is the background)."""
     for outer, holes in _land_polygons():
@@ -607,6 +683,16 @@ def _fig_map(catalog: pd.DataFrame, *, max_plots: int = 6000) -> None:
     idx = np.flatnonzero(mask)
     if len(idx) > max_plots:
         idx = idx[:: len(idx) // max_plots + 1]
+
+    beam_mix = _value_counts(catalog, "beam_mode")
+    beam_colors = _beam_color_map(beam_mix)
+    beam_values = (
+        catalog["beam_mode"].to_numpy()
+        if "beam_mode" in catalog.columns
+        else np.array([None] * len(catalog))
+    )
+    centroid_colors = [_beam_color_for(beam_values[i], beam_colors) for i in idx]
+
     fig, ax = plt.subplots(figsize=(11, 5))
     ocean, land, coast = "#cfe0f0", "#eef2f6", "#8aa0b8"
     ax.set_facecolor(ocean)
@@ -617,42 +703,83 @@ def _fig_map(catalog: pd.DataFrame, *, max_plots: int = 6000) -> None:
         ax.axhline(y, color="white", linewidth=0.4, alpha=0.5)
     ax.axhline(0.0, color=coast, linewidth=0.6, alpha=0.6)
     ax.axvline(0.0, color=coast, linewidth=0.6, alpha=0.6)
+    # Footprint extents (corners) in a neutral colour; the centroid carries the beam/mode colour.
     ax.plot(
         minx[idx],
         miny[idx],
         linestyle="none",
         marker=".",
-        markersize=2.2,
-        color="#2f6fed",
-        alpha=0.55,
+        markersize=2.0,
+        color="#b9c4d0",
+        alpha=0.6,
     )
     ax.plot(
         maxx[idx],
         maxy[idx],
         linestyle="none",
         marker=".",
-        markersize=2.2,
-        color="#2f6fed",
-        alpha=0.55,
+        markersize=2.0,
+        color="#b9c4d0",
+        alpha=0.6,
     )
-    ax.plot(
+    ax.scatter(
         (minx + maxx)[idx] / 2.0,
         (miny + maxy)[idx] / 2.0,
-        linestyle="none",
-        marker=".",
-        markersize=1.4,
-        color="#c0392b",
-        alpha=0.5,
+        c=centroid_colors,
+        s=12,
+        edgecolors="none",
+        alpha=0.85,
     )
+    _beam_legend(ax, beam_mix, beam_colors)
     ax.set_xlim(-180, 180)
     ax.set_ylim(-90, 90)
     ax.set_xlabel("Longitude (degrees)")
     ax.set_ylabel("Latitude (degrees)")
     ax.set_title(
-        "Sample of footprint corners and centroids"
-        f" ({len(idx):,} of {int(mask.sum()):,} parsed footprints)"
+        "Footprint centroids coloured by beam/mode "
+        f"({len(idx):,} of {int(mask.sum()):,} parsed footprints)"
     )
     fig.tight_layout()
+
+
+def _beam_color_for(value: object, colors: dict[str, str]) -> str:
+    """Hex colour for a raw ``beam_mode`` value (unknown/empty → the neutral colour)."""
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return _BEAM_UNKNOWN
+    return colors.get(str(value).strip(), _BEAM_UNKNOWN)
+
+
+def _beam_legend(
+    ax: matplotlib.axes.Axes, beam_mix: list[tuple[str, int]], colors: dict[str, str]
+) -> None:
+    """Dot legend mapping each beam/mode colour used on the map to its label."""
+    handles = []
+    for label, _count in beam_mix[:12]:
+        color = _BEAM_UNKNOWN if label == "(empty)" else colors.get(label)
+        if color is None:
+            continue
+        handles.append(
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                linestyle="none",
+                color=color,
+                markersize=6,
+                label=label,
+            )
+        )
+    if handles:
+        ax.legend(
+            handles=handles,
+            title="Beam / mode",
+            loc="upper left",
+            fontsize=7,
+            title_fontsize=8,
+            framealpha=0.9,
+            handlelength=1.0,
+            borderaxespad=0.6,
+        )
 
 
 def _fig_geometry_issues(stats: CatalogStats) -> None:
@@ -811,16 +938,20 @@ def _volume_section(stats: CatalogStats, volume_fig: str) -> str:
 
 
 def _mix_section(stats: CatalogStats, mix_fig: str) -> str:
+    beam_colors = _beam_color_map(stats.beam_mix)
     blocks = [
-        ("Platform", stats.platform_mix),
-        ("Product type", stats.product_mix),
-        ("Processing level", stats.level_mix),
-        ("Beam / mode", stats.beam_mix),
-        ("Polarization", stats.polarization_mix),
+        ("Platform", stats.platform_mix, None),
+        ("Product type", stats.product_mix, None),
+        ("Processing level", stats.level_mix, None),
+        ("Beam / mode", stats.beam_mix, beam_colors),
+        ("Polarization", stats.polarization_mix, None),
     ]
     inner = "".join(
-        (f'<h3 style="font-size:14px;margin:18px 0 6px">{_e(title)}</h3>\n' + _mix_table(items))
-        for title, items in blocks
+        (
+            f'<h3 style="font-size:14px;margin:18px 0 6px">{_e(title)}</h3>\n'
+            + _mix_table(items, colors)
+        )
+        for title, items, colors in blocks
     )
     return "<h2>2 · Product and instrument mix</h2>\n" + mix_fig + inner
 
@@ -832,8 +963,10 @@ def _geometry_section(stats: CatalogStats, map_fig: str, geo_fig: str) -> str:
         ("Missing / unparsable", stats.geom_missing),
         ("Invalid as delivered (self-intersecting)", stats.geom_invalid),
         ("Cross the antimeridian (±180°)", stats.geom_antimeridian),
-        (f"Near-polar (|lat| &gt; {_NEAR_POLAR_LAT:.0f}°)", stats.geom_near_polar),
-        (f"Within 1° of a pole (|lat| &gt; {_POLE_1DEG_LAT:.0f}°)", stats.geom_pole_1deg),
+        (f"Near-polar (|lat| > {_NEAR_POLAR_LAT:.0f}°)", stats.geom_near_polar),
+        (f"Within 1° of a pole (|lat| > {_POLE_1DEG_LAT:.0f}°)", stats.geom_pole_1deg),
+        ("Centroid over land", stats.geom_land),
+        ("Centroid over ocean", stats.geom_ocean),
     ]
     body = "".join(
         f'<tr><td>{_e(label)}</td><td class="num">{_fmt_int(n)}</td>'
@@ -866,17 +999,20 @@ def _footer(stats: CatalogStats) -> str:
     )
 
 
-def _mix_table(items: list[tuple[str, int]]) -> str:
+def _mix_table(items: list[tuple[str, int]], colors: dict[str, str] | None = None) -> str:
     if not items:
         return '<p class="empty">Nothing to show.</p>\n'
     top = max(n for _, n in items) or 1
+    colors = colors or {}
+    total = sum(x for _, x in items)
     body = "".join(
         "<tr>"
         f"<td>{_e(label)}</td>"
         f'<td class="num">{_fmt_int(n)}</td>'
-        f'<td class="num">{_pct(n, sum(x for _, x in items))}</td>'
+        f'<td class="num">{_pct(n, total)}</td>'
         '<td><span class="barwrap"><span class="bar" '
-        f'style="width:{int(120 * n / top)}px"></span></span></td>'
+        f'style="width:{int(120 * n / top)}px; background:{colors.get(label, "#2f6fed")}">'
+        "</span></span></td>"
         "</tr>"
         for label, n in items
     )

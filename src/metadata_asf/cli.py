@@ -13,9 +13,11 @@ usage (bad arguments, unknown mission, missing input, ...).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import logging
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -234,14 +236,36 @@ def run_harvest(args: argparse.Namespace) -> int:
     return _run_sequential(config)
 
 
+@contextlib.contextmanager
+def _quiet(names: tuple[str, ...]) -> Iterator[None]:
+    """Temporarily mute loggers (and propagate to their children) while a block runs.
+
+    Used to keep the per-day harvest loop on screen to a single starting line and a tqdm bar
+    rather than one line per day/file/empty-day. The previous level of each named logger is
+    restored on exit (including on error).
+    """
+    loggers = [logging.getLogger(name) for name in names]
+    saved = [(lg, lg.level) for lg in loggers]
+    for lg in loggers:
+        lg.setLevel(logging.CRITICAL)
+    try:
+        yield
+    finally:
+        for lg, level in saved:
+            lg.setLevel(level)
+
+
 def _run_sequential(config: config_module.Config) -> int:
     """Harvest ``config.date_range`` one calendar day at a time.
 
     For each day the ASF API is searched, the result extracted to a DataFrame and written to
     its ``{mission}_ocean_YYYYMMDD.parquet`` file. A day whose file already exists is skipped so
     a partially finished span is resumable. A day that yields no product is a legitimate, quiet
-    day (a warning, not an error); a day whose search/extraction/export raises is counted as an
-    error and skipped so the rest of the window still runs.
+    day; a day whose search/extraction/export raises is counted as an error and skipped so the
+    rest of the window still runs.
+
+    The run prints a single starting line, a tqdm progress bar, and a final summary — the
+    per-day, per-file and ASF chatter is silenced for the duration of the loop.
 
     Returns:
         ``0`` when the window is processed (even if every day was empty); ``1`` when at least
@@ -251,42 +275,47 @@ def _run_sequential(config: config_module.Config) -> int:
         logger.error("No acquisition window set; nothing to harvest.")
         return 1
     days = _iter_days(config.date_range[0], config.date_range[1])
+    logger.info(
+        "Harvesting %s: %s → %s (%d day(s)) → %s",
+        config.mission,
+        days[0],
+        days[-1],
+        len(days),
+        config.output_dir,
+    )
     total_records = 0
     written: list[Path] = []
     errors: list[str] = []
 
     bar = tqdm(days, desc="Harvest", unit=" day", disable=not sys.stdout.isatty())
-    for day in bar:
-        bar.set_description(f"Harvest {day:%Y-%m-%d}")
-        target = config.output_dir / f"{config.mission}_ocean_{day:%Y%m%d}.parquet"
-        if target.exists():
-            logger.debug("Skipping %s: %s already present.", day, target.name)
-            continue
-
-        try:
-            products = search_module.search(
-                mission=config.mission,
-                start=day,
-                end=day,
-                intersects_with=config.ocean_wkt,
-                max_results=config.max_results,
-                product_types=config.processing_levels,
-            )
-            if not products:
-                logger.warning(
-                    "No %s acquisition on %s; nothing to write for that day.",
-                    config.mission,
-                    day,
-                )
+    with _quiet(
+        ("metadata_asf.search", "metadata_asf.export", "metadata_asf.extract", "asf_search")
+    ):
+        for day in bar:
+            bar.set_description(f"Harvest {day:%Y-%m-%d}")
+            target = config.output_dir / f"{config.mission}_ocean_{day:%Y%m%d}.parquet"
+            if target.exists():
                 continue
-            frame = extract.to_dataframe(products, mission=config.mission)
-            written.extend(
-                export.write_daily_parquet(frame, config.output_dir, mission=config.mission)
-            )
-            total_records += int(len(frame))
-        except Exception as exc:  # noqa: BLE001 - one bad day must not sink the run.
-            logger.error("Harvest failed for %s: %s", day, exc)
-            errors.append(f"{day}: {exc}")
+
+            try:
+                products = search_module.search(
+                    mission=config.mission,
+                    start=day,
+                    end=day,
+                    intersects_with=config.ocean_wkt,
+                    max_results=config.max_results,
+                    product_types=config.processing_levels,
+                )
+                if not products:
+                    continue
+                frame = extract.to_dataframe(products, mission=config.mission)
+                written.extend(
+                    export.write_daily_parquet(frame, config.output_dir, mission=config.mission)
+                )
+                total_records += int(len(frame))
+            except Exception as exc:  # noqa: BLE001 - one bad day must not sink the run.
+                logger.error("Harvest failed for %s: %s", day, exc)
+                errors.append(f"{day}: {exc}")
 
     _log_summary(config.mission, total_records, written, len(days), errors)
 

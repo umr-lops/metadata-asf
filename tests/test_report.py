@@ -82,6 +82,26 @@ def test_analyze_catalog_geometry_quality(tmp_path: Path) -> None:
     assert stats.geom_missing == 0
     assert stats.geom_invalid == 0
     assert stats.geom_antimeridian == 1
+    # Every valid footprint's centroid lands over land or ocean (the whole point of the split).
+    assert stats.geom_land + stats.geom_ocean == stats.geom_total
+
+
+def test_beam_color_map_is_deterministic_and_excludes_empty() -> None:
+    mix = [("40 MHz, dual-pol HH/HV", 10), ("5 MHz, single-pol VV", 7), ("(empty)", 2)]
+    cmap = report._beam_color_map(mix)
+    # Deterministic: same input -> same assignment; first mode gets the first palette colour.
+    assert cmap["40 MHz, dual-pol HH/HV"] == report._BEAM_PALETTE[0]
+    assert cmap["5 MHz, single-pol VV"] == report._BEAM_PALETTE[1]
+    # "(empty)" / unknown are never assigned a palette colour (they use the neutral one).
+    assert "(empty)" not in cmap
+    assert len(cmap) == 2
+
+
+def test_beam_color_for_unknown_uses_neutral() -> None:
+    cmap = {"40 MHz, dual-pol HH/HV": "#2f6fed"}
+    assert report._beam_color_for("40 MHz, dual-pol HH/HV", cmap) == "#2f6fed"
+    assert report._beam_color_for("other", cmap) == report._BEAM_UNKNOWN
+    assert report._beam_color_for(None, cmap) == report._BEAM_UNKNOWN
 
 
 def test_analyze_catalog_missing_dir_raises(tmp_path: Path) -> None:
@@ -114,6 +134,29 @@ def test_render_report_html_is_self_contained(tmp_path: Path) -> None:
     assert "Volume and completeness" in html
     assert "Product and instrument mix" in html
     assert "Footprint geometry quality" in html
+
+
+def test_geometry_labels_not_double_escaped_and_land_ocean_present(tmp_path: Path) -> None:
+    _write_daily(tmp_path, {"2025-01-01": 2})
+    stats = report.analyze_catalog(tmp_path)
+    combined, *_ = report._read_catalog(report._find_files(tmp_path))
+    html = report.render_report_html(stats, catalog=combined)
+
+    # No double-escaping of the ">" operator in the geometry table labels.
+    assert "&amp;gt;" not in html
+    assert "Centroid over land" in html
+    assert "Centroid over ocean" in html
+    # Beam/mode values carry a palette colour in the table (inline background).
+    assert "background:#2f6fed" in html
+
+
+def test_map_figure_color_codes_by_beam_mode(tmp_path: Path) -> None:
+    """The footprint map is drawn from a beam-backfilled frame without error."""
+    _write_daily(tmp_path, {"2025-01-01": 3})
+    combined, *_ = report._read_catalog(report._find_files(tmp_path))
+    combined = report._backfill_beam_mode(combined, mission="NISAR")
+    # Rendering the map (colour-coded centroids + legend) must not raise.
+    report._safe_figure("map", lambda: report._fig_map(combined))
 
 
 def test_render_report_without_catalog_still_renders(tmp_path: Path) -> None:

@@ -109,8 +109,10 @@ def test_no_result_returns_zero_without_writing(
     monkeypatch.setattr(cli.export, "write_daily_parquet", lambda *a, **k: [])
     rc = cli.main(["harvest", "--outputdir", str(tmp_path), "--start", "2025-01-01"])
     assert rc == 0
-    # setup_logging streams to stdout; the empty-result warning must be logged there.
-    assert "No NISAR acquisition" in capsys.readouterr().out
+    # The per-day "no acquisition" warning is silenced; only the starting line + summary show.
+    out = capsys.readouterr().out
+    assert "=== Résumé ===" in out
+    assert "No NISAR acquisition" not in out
 
 
 def test_search_error_returns_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
