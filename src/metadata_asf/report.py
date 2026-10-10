@@ -7,23 +7,32 @@ downloads anything (AGENTS.md section 13), and the HTML it emits is fully
 self-contained (inline CSS, no JavaScript, no external assets) so a single
 file stands alone.
 
-Inspired by the IFR-EMER/LOPS RCM daily metadata report; the "local archive
-cross-check" section of that reference does not apply here, because
-``metadata-asf`` holds no local product archive (that is ``fetch-asf``'s job).
+Figures (daily volume, cumulative records, mix panels, footprint map,
+geometry-issue chart) are rendered server-side with matplotlib and inlined
+as base64 PNG data URIs, mirroring the IFR-EMER/LOPS RCM daily metadata
+report that this module is inspired by. The "local archive cross-check"
+section of that reference does not apply here, because ``metadata-asf``
+holds no local product archive (that is ``fetch-asf``'s job).
 """
 
 from __future__ import annotations
 
+import base64
 import dataclasses
 import datetime as dt
 import html
+import io
 import logging
 import re
+from collections.abc import Callable
 from pathlib import Path
 
+import matplotlib
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import shapely
+from matplotlib.patches import Rectangle
 
 logger = logging.getLogger(__name__)
 
@@ -84,70 +93,32 @@ def analyze_catalog(catalog_dir: Path, *, mission: str | None = None) -> Catalog
         FileNotFoundError: if ``catalog_dir`` does not exist.
         ValueError: if the directory exists but holds no ``*.parquet`` file.
     """
-    if not catalog_dir.is_dir():
-        raise FileNotFoundError(f"Catalog directory not found: {catalog_dir}")
-
-    files = sorted(catalog_dir.glob("*.parquet"))
-    if not files:
-        raise ValueError(f"No *.parquet files in catalog directory: {catalog_dir}")
-
-    frames: list[pd.DataFrame] = []
-    file_days: list[dt.date | None] = []
-    file_rows: list[int] = []
-    file_sizes: list[int] = []
-    for path in files:
-        frame = pd.read_parquet(path)
-        frames.append(frame)
-        file_days.append(_day_from_name(path.name))
-        file_rows.append(len(frame))
-        file_sizes.append(path.stat().st_size)
-
-    combined = (
-        pd.concat(frames, ignore_index=True)
-        if frames
-        else pd.DataFrame(columns=["start_time", "geometry"])
-    )
-
-    per_day, platform_mix, product_mix, level_mix, beam_mix, polarization_mix = _mixes(combined)
-    geom = _geometry_quality(combined)
-    stats = _completeness(file_days, file_rows)
-    return CatalogStats(
-        mission=mission or _mission_label(combined),
-        generated_at=dt.datetime.now(dt.timezone.utc),
-        total_records=int(len(combined)),
-        total_files=len(files),
-        total_size_bytes=int(sum(file_sizes)),
-        span_start=stats.span_start,
-        span_end=stats.span_end,
-        missing_days=stats.missing_days,
-        empty_days=stats.empty_days,
-        first_day_with_data=stats.first_day_with_data,
-        mean_per_day=stats.mean_per_day,
-        median_per_day=stats.median_per_day,
-        busiest_day=stats.busiest_day,
-        per_day=per_day,
-        platform_mix=platform_mix,
-        product_mix=product_mix,
-        level_mix=level_mix,
-        beam_mix=beam_mix,
-        polarization_mix=polarization_mix,
-        **geom,
-    )
+    combined, file_days, file_rows, file_sizes = _read_catalog(_find_files(catalog_dir))
+    return _summarize(combined, file_days, file_rows, file_sizes, mission)
 
 
-def render_report_html(stats: CatalogStats) -> str:
+def render_report_html(stats: CatalogStats, *, catalog: pd.DataFrame | None = None) -> str:
     """Render :class:`CatalogStats` into a self-contained HTML document.
 
     Args:
         stats: the aggregated catalog statistics to render.
+        catalog: optional combined record frame; when given, the footprint
+            world map is drawn from its ``geometry`` column.
 
     Returns:
-        The full HTML page as a string (UTF-8, inline CSS, no external assets).
+        The full HTML page as a string (UTF-8, inline CSS, figures inlined as
+        base64 PNG data URIs, no JavaScript, no external assets).
     """
     parts: list[str] = [_doctype(), _head(), _header(stats), _kpi_cards(stats)]
-    parts.append(_volume_section(stats))
-    parts.append(_mix_section(stats))
-    parts.append(_geometry_section(stats))
+    parts.append(_volume_section(stats, _safe_figure("volume", lambda: _fig_volume(stats))))
+    parts.append(_mix_section(stats, _safe_figure("mix", lambda: _fig_mix(stats))))
+    map_html = (
+        _safe_figure("map", lambda: _fig_map(catalog))
+        if catalog is not None and not catalog.empty and "geometry" in catalog.columns
+        else ""
+    )
+    geo_fig = _safe_figure("geometry", lambda: _fig_geometry_issues(stats))
+    parts.append(_geometry_section(stats, map_html, geo_fig))
     parts.append(_footer(stats))
     parts.append("</body>\n</html>\n")
     return "".join(parts)
@@ -170,9 +141,10 @@ def write_report(
     Returns:
         The path of the written report.
     """
-    stats = analyze_catalog(catalog_dir, mission=mission)
+    combined, file_days, file_rows, file_sizes = _read_catalog(_find_files(catalog_dir))
+    stats = _summarize(combined, file_days, file_rows, file_sizes, mission)
     output_file.parent.mkdir(parents=True, exist_ok=True)
-    output_file.write_text(render_report_html(stats), encoding="utf-8")
+    output_file.write_text(render_report_html(stats, catalog=combined), encoding="utf-8")
     logger.info(
         "Wrote report %s — %d records over %d daily file(s).",
         output_file,
@@ -180,6 +152,73 @@ def write_report(
         stats.total_files,
     )
     return output_file
+
+
+def _find_files(catalog_dir: Path) -> list[Path]:
+    """The sorted ``*.parquet`` inventory of ``catalog_dir`` (validated)."""
+    if not catalog_dir.is_dir():
+        raise FileNotFoundError(f"Catalog directory not found: {catalog_dir}")
+    files = sorted(catalog_dir.glob("*.parquet"))
+    if not files:
+        raise ValueError(f"No *.parquet files in catalog directory: {catalog_dir}")
+    return files
+
+
+def _read_catalog(
+    files: list[Path],
+) -> tuple[pd.DataFrame, list[dt.date | None], list[int], list[int]]:
+    """Read every catalog file; return the combined frame plus per-file metadata."""
+    frames: list[pd.DataFrame] = []
+    file_days: list[dt.date | None] = []
+    file_rows: list[int] = []
+    file_sizes: list[int] = []
+    for path in files:
+        frame = pd.read_parquet(path)
+        frames.append(frame)
+        file_days.append(_day_from_name(path.name))
+        file_rows.append(len(frame))
+        file_sizes.append(path.stat().st_size)
+    combined = (
+        pd.concat(frames, ignore_index=True)
+        if frames
+        else pd.DataFrame(columns=["start_time", "geometry"])
+    )
+    return combined, file_days, file_rows, file_sizes
+
+
+def _summarize(
+    combined: pd.DataFrame,
+    file_days: list[dt.date | None],
+    file_rows: list[int],
+    file_sizes: list[int],
+    mission: str | None,
+) -> CatalogStats:
+    """Aggregate the combined frame and file inventory into :class:`CatalogStats`."""
+    per_day, platform_mix, product_mix, level_mix, beam_mix, polarization_mix = _mixes(combined)
+    geom = _geometry_quality(combined)
+    completeness = _completeness(file_days, file_rows)
+    return CatalogStats(
+        mission=mission or _mission_label(combined),
+        generated_at=dt.datetime.now(dt.timezone.utc),
+        total_records=int(len(combined)),
+        total_files=len(file_days),
+        total_size_bytes=int(sum(file_sizes)),
+        span_start=completeness.span_start,
+        span_end=completeness.span_end,
+        missing_days=completeness.missing_days,
+        empty_days=completeness.empty_days,
+        first_day_with_data=completeness.first_day_with_data,
+        mean_per_day=completeness.mean_per_day,
+        median_per_day=completeness.median_per_day,
+        busiest_day=completeness.busiest_day,
+        per_day=per_day,
+        platform_mix=platform_mix,
+        product_mix=product_mix,
+        level_mix=level_mix,
+        beam_mix=beam_mix,
+        polarization_mix=polarization_mix,
+        **geom,
+    )
 
 
 def _day_from_name(name: str) -> dt.date | None:
@@ -372,6 +411,176 @@ class _Completeness:
     busiest_day: int
 
 
+# --- Figure rendering (matplotlib, inlined as base64 PNG) --------------------
+
+
+def _safe_figure(name: str, draw: Callable[[], None]) -> str:
+    """Render ``draw()`` into an ``<img>`` tag, degrading to a note on any failure."""
+    try:
+        matplotlib.use("Agg", force=False)
+        draw()
+    except Exception as exc:  # noqa: BLE001 - a figure must never break the report
+        logger.warning("Could not render figure %r for the report: %s", name, exc)
+        return (
+            f'<p class="empty">Figure “{_e(name)}” could not be rendered '
+            f"({html.escape(type(exc).__name__)}).</p>\n"
+        )
+    buf = io.BytesIO()
+    plt.gcf().savefig(buf, format="png", dpi=110, bbox_inches="tight")
+    plt.close("all")
+    data = base64.b64encode(buf.getvalue()).decode("ascii")
+    return f'<img alt="{_e(name)}" class="figure" src="data:image/png;base64,{data}">\n'
+
+
+def _fig_volume(stats: CatalogStats) -> None:
+    """Daily record counts with a cumulative-records twin axis (figure 1)."""
+    days = [d for d, _ in stats.per_day]
+    counts = [int(n) for _, n in stats.per_day]
+    if not days:
+        fig, ax = plt.subplots(figsize=(11, 2.8))
+        ax.text(0.5, 0.5, "No records to plot", ha="center", va="center")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        return
+    fig, ax = plt.subplots(figsize=(11, 2.8))
+    x = np.arange(len(days))
+    ax.bar(x, counts, width=1.0, color="#2f6fed")
+    ax.set_ylabel("Records / day")
+    ax.set_title("Daily records and cumulative records")
+    ax2 = ax.twinx()
+    ax2.plot(x, np.cumsum(counts), color="#c0392b", linewidth=1.4)
+    ax2.set_ylabel("Cumulative records")
+    ax.set_xticks(x[:: max(1, len(days) // 8)])
+    ax.set_xticklabels(
+        [f"{d:%Y-%m-%d}" for d in days[:: max(1, len(days) // 8)]], rotation=30, ha="right"
+    )
+    fig.tight_layout()
+
+
+def _fig_mix(stats: CatalogStats) -> None:
+    """Side-by-side horizontal mix panels: product type, level, beam, polarization."""
+    panels = [
+        ("Product type", stats.product_mix),
+        ("Processing level", stats.level_mix),
+        ("Beam / mode", stats.beam_mix),
+        ("Polarization", stats.polarization_mix),
+    ]
+    fig, axes = plt.subplots(1, len(panels), figsize=(15, 3.6), sharey=False)
+    for ax, (title, items) in zip(axes, panels, strict=True):
+        items = items[:15]
+        if not items:
+            ax.axis("off")
+            ax.set_title(title)
+            continue
+        labels = [label for label, _ in items][::-1]
+        values = [n for _, n in items][::-1]
+        bars = ax.barh(labels, values, color="#2f6fed")
+        total = sum(values)
+        for bar, value in zip(bars, values, strict=True):
+            ax.text(
+                bar.get_width(),
+                bar.get_y() + bar.get_height() / 2,
+                f"{value:,} ({100.0 * value / total:.1f}%)",
+                va="center",
+                fontsize=8,
+            )
+        ax.set_title(title)
+        ax.margins(x=0.35)
+    fig.tight_layout()
+
+
+def _fig_map(catalog: pd.DataFrame, *, max_plots: int = 6000) -> None:
+    """World map of sample footprint centroids and extents (figure 3)."""
+    geom = catalog["geometry"]
+    valid = shapely.from_wkt(np.asarray(geom, dtype=object), on_invalid="ignore")
+    keep = shapely.is_valid(valid)
+    minx, miny, maxx, maxy = shapely.bounds(valid).T
+    mask = keep & np.isfinite(np.column_stack([minx, miny, maxx, maxy])).all(axis=1)
+    if int(mask.sum()) == 0:
+        fig, ax = plt.subplots(figsize=(11, 5))
+        ax.text(0.5, 0.5, "No plottable footprints", ha="center", va="center")
+        ax.axis("off")
+        return
+    idx = np.flatnonzero(mask)
+    if len(idx) > max_plots:
+        idx = idx[:: len(idx) // max_plots + 1]
+    fig, ax = plt.subplots(figsize=(11, 5))
+    ax.add_patch(Rectangle((-180, -90), 360, 180, fill=False, edgecolor="#b9c4d0", linewidth=0.8))
+    for x in range(-180, 181, 30):
+        ax.axvline(x, color="#e3e8ef", linewidth=0.5)
+    for y in range(-60, 61, 30):
+        ax.axhline(y, color="#e3e8ef", linewidth=0.5)
+    ax.axhline(0.0, color="#b9c4d0", linewidth=0.8)
+    ax.axvline(0.0, color="#b9c4d0", linewidth=0.8)
+    ax.plot(
+        minx[idx],
+        miny[idx],
+        linestyle="none",
+        marker=".",
+        markersize=2.2,
+        color="#2f6fed",
+        alpha=0.55,
+    )
+    ax.plot(
+        maxx[idx],
+        maxy[idx],
+        linestyle="none",
+        marker=".",
+        markersize=2.2,
+        color="#2f6fed",
+        alpha=0.55,
+    )
+    ax.plot(
+        (minx + maxx)[idx] / 2.0,
+        (miny + maxy)[idx] / 2.0,
+        linestyle="none",
+        marker=".",
+        markersize=1.4,
+        color="#c0392b",
+        alpha=0.5,
+    )
+    ax.set_xlim(-180, 180)
+    ax.set_ylim(-90, 90)
+    ax.set_xlabel("Longitude (degrees)")
+    ax.set_ylabel("Latitude (degrees)")
+    ax.set_title(
+        "Sample of footprint corners and centroids"
+        f" ({len(idx):,} of {int(mask.sum()):,} parsed footprints)"
+    )
+    fig.tight_layout()
+
+
+def _fig_geometry_issues(stats: CatalogStats) -> None:
+    """Horizontal bar chart of the geometry-issue counts (figure 4)."""
+    labels = [
+        "Invalid as delivered",
+        "Cross the antimeridian",
+        f"Near-polar (|lat| > {_NEAR_POLAR_LAT:.0f}°)",
+        f"Within 1° of a pole (|lat| > {_POLE_1DEG_LAT:.0f}°)",
+    ]
+    values = [
+        stats.geom_invalid,
+        stats.geom_antimeridian,
+        stats.geom_near_polar,
+        stats.geom_pole_1deg,
+    ]
+    total = stats.geom_total or stats.total_records or 1
+    fig, ax = plt.subplots(figsize=(11, 3.0))
+    bars = ax.barh(labels[::-1], values[::-1], color="#e67e22")
+    for bar, value in zip(bars, values[::-1], strict=True):
+        ax.text(
+            bar.get_width(),
+            bar.get_y() + bar.get_height() / 2,
+            f"{value:,} ({100.0 * value / total:.2f}%)",
+            va="center",
+            fontsize=9,
+        )
+    ax.set_title("Footprint geometry issues over the whole archive")
+    ax.set_xlabel("Number of footprints")
+    ax.margins(x=0.3)
+    fig.tight_layout()
+
+
 # --- HTML rendering ---------------------------------------------------------
 
 
@@ -418,6 +627,8 @@ def _head() -> str:
         "  footer { margin-top:40px; padding-top:16px; border-top:1px solid var(--line); "
         "color:var(--muted); font-size:12px; }"
         "  .empty { color:var(--muted); font-style:italic; }"
+        "  .figure { width:100%; height:auto; background:var(--card); border:1px solid "
+        "var(--line); border-radius:8px; margin:14px 0; }"
         '</style>\n</head>\n<body>\n<div class="wrap">\n'
     )
 
@@ -447,7 +658,7 @@ def _kpi_cards(stats: CatalogStats) -> str:
     return f'<div class="cards">{body}</div>\n'
 
 
-def _volume_section(stats: CatalogStats) -> str:
+def _volume_section(stats: CatalogStats, volume_fig: str) -> str:
     rows: list[str] = []
     for day, count in stats.per_day:
         rows.append(f'<tr><td>{_e(str(day))}</td><td class="num">{_fmt_int(count)}</td></tr>')
@@ -486,6 +697,7 @@ def _volume_section(stats: CatalogStats) -> str:
         "<h2>1 · Volume and completeness</h2>\n"
         + note
         + cards
+        + volume_fig
         + missing_block
         + empty_block
         + table
@@ -493,7 +705,7 @@ def _volume_section(stats: CatalogStats) -> str:
     )
 
 
-def _mix_section(stats: CatalogStats) -> str:
+def _mix_section(stats: CatalogStats, mix_fig: str) -> str:
     blocks = [
         ("Platform", stats.platform_mix),
         ("Product type", stats.product_mix),
@@ -505,10 +717,10 @@ def _mix_section(stats: CatalogStats) -> str:
         (f'<h3 style="font-size:14px;margin:18px 0 6px">{_e(title)}</h3>\n' + _mix_table(items))
         for title, items in blocks
     )
-    return "<h2>2 · Product and instrument mix</h2>\n" + inner
+    return "<h2>2 · Product and instrument mix</h2>\n" + mix_fig + inner
 
 
-def _geometry_section(stats: CatalogStats) -> str:
+def _geometry_section(stats: CatalogStats, map_fig: str, geo_fig: str) -> str:
     total = stats.geom_total or stats.total_records
     rows = [
         ("Footprints parsed", stats.geom_total),
@@ -534,6 +746,8 @@ def _geometry_section(stats: CatalogStats) -> str:
     return (
         "<h2>3 · Footprint geometry quality</h2>\n"
         + note
+        + map_fig
+        + geo_fig
         + '<table><thead><tr><th>Property</th><th class="num">Count</th>'
         '<th class="num">Share</th></tr></thead><tbody>' + body + "</tbody></table>\n"
     )

@@ -32,6 +32,7 @@ requires-python = ">=3.10"
 
 dependencies = [
   "asf_search",
+  "matplotlib",
   "pandas",
   "pyarrow",
   "pydantic>=2",

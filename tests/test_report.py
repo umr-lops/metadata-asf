@@ -97,19 +97,32 @@ def test_analyze_catalog_no_parquet_raises(tmp_path: Path) -> None:
 
 def test_render_report_html_is_self_contained(tmp_path: Path) -> None:
     _write_daily(tmp_path, {"2025-01-01": 2})
-    html = report.render_report_html(report.analyze_catalog(tmp_path))
+    stats = report.analyze_catalog(tmp_path)
+    combined, *_ = report._read_catalog(report._find_files(tmp_path))
+    html = report.render_report_html(stats, catalog=combined)
 
     assert html.startswith("<!DOCTYPE html>")
     assert "</html>" in html
     # Inline CSS, no JavaScript, no external assets.
     assert "<style>" in html
     assert "<script" not in html
-    assert "src=" not in html
+    assert 'src="http' not in html
     assert 'href="http' not in html
+    # Figures are inlined as base64 PNG data URIs (volume, mix, map, geometry).
+    assert html.count("data:image/png;base64,") >= 4
     # The three documented sections are present.
     assert "Volume and completeness" in html
     assert "Product and instrument mix" in html
     assert "Footprint geometry quality" in html
+
+
+def test_render_report_without_catalog_still_renders(tmp_path: Path) -> None:
+    _write_daily(tmp_path, {"2025-01-01": 1})
+    html = report.render_report_html(report.analyze_catalog(tmp_path))
+
+    # No map without a catalog frame, but the stats-only figures are present.
+    assert "data:image/png;base64," in html
+    assert "Volume and completeness" in html
 
 
 def test_write_report_returns_path(tmp_path: Path) -> None:
