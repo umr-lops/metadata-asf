@@ -133,6 +133,7 @@ Priorité : `CLI > fichier --conf > valeurs par défaut du profil de mission`.
   - `tqdm` — barres de progression
   - `shapely` — conversion géométrie → WKT
   - `tenacity` — retry exponentiel sur appels API
+  - `matplotlib` — figures du rapport HTML (rendues côté serveur, PNG intégrés en base64)
 - **Dev** : `ruff`, `black`, `mypy`, `pytest`, `pytest-cov`, `pre-commit`
 - **Logging** : module `logging` standard, sortie sur `stdout`.
 

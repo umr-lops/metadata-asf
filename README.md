@@ -50,17 +50,25 @@ metadata-asf harvest \
   --mission NISAR \
   --outputdir ./out \
   --log-verbosity INFO \
-  --date 2025-01-01:2025-01-31 \
+  --start 2025-01-01 \
+  --stop 2025-01-31 \
   --conf config.yaml
 ```
+
+The window is harvested **sequentially, one day at a time**: each day is searched, extracted
+and written to its own Parquet file. A day whose file already exists is skipped, so a partially
+finished span can simply be re-run to completion.
 
 | Option            | Required | Description                                                        |
 |-------------------|----------|--------------------------------------------------------------------|
 | `--mission`       | no       | Target mission (default: `NISAR`).                                  |
 | `--outputdir`     | yes      | Directory where daily Parquet files are written.                    |
 | `--log-verbosity` | no       | `DEBUG`, `INFO`, `WARNING` or `ERROR` (default: `INFO`).            |
-| `--date`          | no       | `YYYY-MM-DD` or range `YYYY-MM-DD:YYYY-MM-DD`.                      |
+| `--start`         | yes*     | First day of the window, `YYYY-MM-DD`.                              |
+| `--stop`          | no       | Last day of the window, `YYYY-MM-DD` (inclusive; default: `--start`).|
 | `--conf`          | no       | YAML configuration file (see `config.example.yaml`).                |
+
+\* `--start` can be omitted only if a window is provided by `--conf` (`date_range`).
 
 Precedence is **CLI > `--conf` file > mission profile defaults**. See `config.example.yaml`
 for a complete working example.
@@ -78,7 +86,10 @@ metadata-asf report \
 
 The report covers volume & completeness (records, daily files, span, missing/empty
 days), the product/instrument mix (platform, product type, level, beam, polarization)
-and footprint geometry quality (invalid / antimeridian / near-polar).
+and footprint geometry quality (invalid / antimeridian / near-polar). It is illustrated
+with matplotlib figures (daily volume + cumulative records, mix panels, a footprint
+world map and a geometry-issue chart) rendered server-side and inlined as base64 PNGs,
+so the single HTML file stands alone with no JavaScript and no external assets.
 
 | Option            | Required | Description                                                        |
 |-------------------|----------|--------------------------------------------------------------------|

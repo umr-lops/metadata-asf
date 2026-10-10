@@ -1,4 +1,4 @@
-"""Tests for :mod:`metadata_asf.utils` (date parsing, UTC coercion, logging)."""
+"""Tests for :mod:`metadata_asf.utils` (UTC coercion, logging)."""
 
 from __future__ import annotations
 
@@ -9,37 +9,9 @@ from collections.abc import Generator
 import pandas as pd
 import pytest
 
-from metadata_asf.utils import parse_date, setup_logging, utc_datetime
+from metadata_asf.utils import setup_logging, utc_datetime
 
 UTC = dt.timezone.utc
-
-
-class TestParseDate:
-    def test_single_date(self) -> None:
-        assert parse_date("2025-01-15") == dt.date(2025, 1, 15)
-
-    def test_inclusive_range(self) -> None:
-        assert parse_date("2025-01-01:2025-01-31") == (dt.date(2025, 1, 1), dt.date(2025, 1, 31))
-
-    def test_inverted_range_rejected(self) -> None:
-        with pytest.raises(ValueError, match="starts .* after"):
-            parse_date("2025-01-31:2025-01-01")
-
-    @pytest.mark.parametrize(
-        "bad",
-        [
-            "2025-01",  # too short
-            "2025-01-15:01:02",  # too many ':' parts
-            "2025-13-01",  # month out of range
-            "2025-01-32",  # day out of range
-            "15-01-2025",  # wrong order
-            "abc:def",  # not digits
-            "",  # empty
-        ],
-    )
-    def test_malformed_tokens_rejected(self, bad: str) -> None:
-        with pytest.raises(ValueError):
-            parse_date(bad)
 
 
 class TestUtcDatetime:

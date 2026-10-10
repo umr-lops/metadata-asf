@@ -50,12 +50,18 @@ Harvest
 
 .. code-block:: bash
 
-   metadata-asf harvest \
-     --mission NISAR \
-     --outputdir ./out \
-     --log-verbosity INFO \
-     --date 2025-01-01:2025-01-31 \
-     --conf config.yaml
+    metadata-asf harvest \
+      --mission NISAR \
+      --outputdir ./out \
+      --log-verbosity INFO \
+      --start 2025-01-01 \
+      --stop 2025-01-31 \
+      --conf config.yaml
+
+The window is harvested **sequentially, one day at a time**: each day is
+searched, extracted and written to its own Parquet file. A day whose file
+already exists is skipped, so a partially finished span can be re-run to
+completion.
 
 ===============  ========  =====================================================
 Option           Required  Description
@@ -63,9 +69,12 @@ Option           Required  Description
 --mission         no       Target mission (default: NISAR)
 --outputdir       yes      Directory where daily Parquet files are written
 --log-verbosity   no       DEBUG, INFO, WARNING or ERROR (default INFO)
---date            no       YYYY-MM-DD or range YYYY-MM-DD:YYYY-MM-DD
+--start           yes*     First day of the window, YYYY-MM-DD
+--stop            no       Last day, YYYY-MM-DD (inclusive; default: --start)
 --conf            no       YAML configuration file (see config.example.yaml)
 ===============  ========  =====================================================
+
+.. * ``--start`` can be omitted only if a window is provided by ``--conf``.
 
 Precedence is **CLI > ``--conf`` file > mission profile defaults**.
 
@@ -90,7 +99,9 @@ Option           Required  Description
 
 The report is a single self-contained HTML file (inline CSS, no JavaScript, no
 external assets) covering volume and completeness, the product/instrument mix, and
-footprint geometry quality. It is read-only and makes no API calls.
+footprint geometry quality. It is read-only and makes no API calls. Figures (daily
+volume, cumulative records, mix panels, footprint map, geometry issues) are rendered
+server-side with matplotlib and inlined as base64 PNGs.
 
 Python API
 ----------

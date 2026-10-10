@@ -29,8 +29,11 @@ def _restore_root_logging() -> Generator[None, None, None]:
 
 def _stub_stages(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     calls: dict[str, Any] = {}
+    search_windows: list[tuple[dt.date, dt.date]] = []
+    calls["search_windows"] = search_windows
 
     def fake_search(**kwargs: Any) -> list[object]:
+        search_windows.append((kwargs["start"], kwargs["end"]))
         calls["search"] = kwargs
         return [FakeProduct(), FakeProduct()]
 
@@ -77,14 +80,19 @@ def test_success_returns_zero_and_runs_all_stages(
             "NISAR",
             "--outputdir",
             str(out),
-            "--date",
-            "2025-01-01:2025-01-31",
+            "--start",
+            "2025-01-01",
+            "--stop",
+            "2025-01-31",
         ]
     )
     assert rc == 0
     assert out.exists()
-    assert calls["search"]["start"] == _d(2025, 1, 1)
-    assert calls["search"]["end"] == _d(2025, 1, 31)
+    # Sequential mode: one search per day, each a single-day [day, day] window.
+    windows = calls["search_windows"]
+    assert windows[0] == (_d(2025, 1, 1), _d(2025, 1, 1))
+    assert windows[-1] == (_d(2025, 1, 31), _d(2025, 1, 31))
+    assert len(windows) == 31
     assert calls["extract"]["mission"] == "NISAR"
     assert calls["export"]["output_dir"] == out
 
@@ -99,10 +107,12 @@ def test_no_result_returns_zero_without_writing(
 
     monkeypatch.setattr(cli.extract, "to_dataframe", boom_to_dataframe)
     monkeypatch.setattr(cli.export, "write_daily_parquet", lambda *a, **k: [])
-    rc = cli.main(["harvest", "--outputdir", str(tmp_path), "--date", "2025-01-01"])
+    rc = cli.main(["harvest", "--outputdir", str(tmp_path), "--start", "2025-01-01"])
     assert rc == 0
-    # setup_logging streams to stdout; the empty-result warning must be logged there.
-    assert "No NISAR acquisition" in capsys.readouterr().out
+    # The per-day "no acquisition" warning is silenced; only the starting line + summary show.
+    out = capsys.readouterr().out
+    assert "=== Résumé ===" in out
+    assert "No NISAR acquisition" not in out
 
 
 def test_search_error_returns_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -110,7 +120,7 @@ def test_search_error_returns_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         raise RuntimeError("cmr exploded")
 
     monkeypatch.setattr(cli.search_module, "search", failing_search)
-    rc = cli.main(["harvest", "--outputdir", str(tmp_path), "--date", "2025-01-01"])
+    rc = cli.main(["harvest", "--outputdir", str(tmp_path), "--start", "2025-01-01"])
     assert rc == 1
 
 
@@ -121,7 +131,7 @@ def test_extraction_error_returns_one(tmp_path: Path, monkeypatch: pytest.Monkey
         raise ValueError("bad field")
 
     monkeypatch.setattr(cli.extract, "to_dataframe", failing_extract)
-    rc = cli.main(["harvest", "--outputdir", str(tmp_path), "--date", "2025-01-01"])
+    rc = cli.main(["harvest", "--outputdir", str(tmp_path), "--start", "2025-01-01"])
     assert rc == 1
 
 
@@ -132,7 +142,7 @@ def test_export_error_returns_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         raise OSError("disk full")
 
     monkeypatch.setattr(cli.export, "write_daily_parquet", failing_write)
-    rc = cli.main(["harvest", "--outputdir", str(tmp_path), "--date", "2025-01-01"])
+    rc = cli.main(["harvest", "--outputdir", str(tmp_path), "--start", "2025-01-01"])
     assert rc == 1
 
 
@@ -147,7 +157,7 @@ def test_unknown_mission_returns_two_and_lists(
             "SENTINEL-1",
             "--outputdir",
             str(tmp_path),
-            "--date",
+            "--start",
             "2025-01-01",
         ]
     )
@@ -159,13 +169,29 @@ def test_unknown_mission_returns_two_and_lists(
 
 def test_bad_date_returns_two(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _stub_stages(monkeypatch)
-    rc = cli.main(["harvest", "--outputdir", str(tmp_path), "--date", "2025-01-31:2025-01-01"])
+    rc = cli.main(
+        [
+            "harvest",
+            "--outputdir",
+            str(tmp_path),
+            "--start",
+            "2025-01-31",
+            "--stop",
+            "2025-01-01",
+        ]
+    )
     assert rc == 2
 
 
-def test_missing_date_returns_two(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_start_returns_two(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _stub_stages(monkeypatch)
     rc = cli.main(["harvest", "--outputdir", str(tmp_path)])
+    assert rc == 2
+
+
+def test_stop_without_start_returns_two(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_stages(monkeypatch)
+    rc = cli.main(["harvest", "--outputdir", str(tmp_path), "--stop", "2025-01-05"])
     assert rc == 2
 
 
@@ -173,14 +199,18 @@ def test_conf_file_provides_window(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     calls = _stub_stages(monkeypatch)
     conf = tmp_path / "conf.yaml"
     conf.write_text(
-        "output_dir: /ignored\n" 'date_range: ["2025-02-01", "2025-02-28"]\n' "max_results: 42\n",
+        "output_dir: /ignored\n" 'date_range: ["2025-02-01", "2025-02-03"]\n' "max_results: 42\n",
         encoding="utf-8",
     )
     out = tmp_path / "out"
     rc = cli.main(["harvest", "--outputdir", str(out), "--conf", str(conf)])
     assert rc == 0
-    assert calls["search"]["start"] == _d(2025, 2, 1)
-    assert calls["search"]["end"] == _d(2025, 2, 28)
+    # No --start on the CLI: the file window is harvested day by day.
+    assert calls["search_windows"] == [
+        (_d(2025, 2, 1), _d(2025, 2, 1)),
+        (_d(2025, 2, 2), _d(2025, 2, 2)),
+        (_d(2025, 2, 3), _d(2025, 2, 3)),
+    ]
     assert calls["search"]["max_results"] == 42
 
 
@@ -189,9 +219,9 @@ def test_conf_file_beats_defaults_cli_beats_conf(
 ) -> None:
     calls = _stub_stages(monkeypatch)
     conf = tmp_path / "conf.yaml"
-    conf.write_text('date_range: ["2025-02-01", "2025-02-28"]\nmax_results: 7\n', encoding="utf-8")
+    conf.write_text('date_range: ["2025-02-01", "2025-02-03"]\nmax_results: 7\n', encoding="utf-8")
     out = tmp_path / "out"
-    # CLI --date overrides the file window; the file max_results (7) survives.
+    # CLI --start/--stop overrides the file window; the file max_results (7) survives.
     rc = cli.main(
         [
             "harvest",
@@ -199,25 +229,49 @@ def test_conf_file_beats_defaults_cli_beats_conf(
             str(out),
             "--conf",
             str(conf),
-            "--date",
-            "2025-03-01:2025-03-02",
+            "--start",
+            "2025-03-01",
+            "--stop",
+            "2025-03-02",
         ]
     )
     assert rc == 0
-    assert calls["search"]["start"] == _d(2025, 3, 1)
-    assert calls["search"]["end"] == _d(2025, 3, 2)
+    assert calls["search_windows"] == [
+        (_d(2025, 3, 1), _d(2025, 3, 1)),
+        (_d(2025, 3, 2), _d(2025, 3, 2)),
+    ]
     assert calls["search"].get("max_results") == 7
 
 
-def test_single_date_becomes_one_day_window(
+def test_start_only_defaults_stop_to_start(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = _stub_stages(monkeypatch)
-    rc = cli.main(["harvest", "--outputdir", str(tmp_path), "--date", "2025-05-10"])
+    rc = cli.main(["harvest", "--outputdir", str(tmp_path), "--start", "2025-05-10"])
     assert rc == 0
-    assert calls["search"]["start"] == _d(2025, 5, 10)
-    assert calls["search"]["end"] == _d(2025, 5, 10)
+    assert calls["search_windows"] == [(_d(2025, 5, 10), _d(2025, 5, 10))]
+
+
+def test_resume_skips_existing_day_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _stub_stages(monkeypatch)
+    out = tmp_path / "out"
+    (out / "NISAR_ocean_20250301.parquet").parent.mkdir(parents=True)
+    (out / "NISAR_ocean_20250301.parquet").write_text("done", encoding="utf-8")
+    rc = cli.main(
+        [
+            "harvest",
+            "--outputdir",
+            str(out),
+            "--start",
+            "2025-03-01",
+            "--stop",
+            "2025-03-02",
+        ]
+    )
+    assert rc == 0
+    # The existing 03-01 file is skipped; only 03-02 is searched.
+    assert calls["search_windows"] == [(_d(2025, 3, 2), _d(2025, 3, 2))]
 
 
 def test_report_writes_html(tmp_path: Path) -> None:

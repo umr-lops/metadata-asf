@@ -98,6 +98,20 @@ def test_gslc_derives_l2() -> None:
     assert row["processing_level"] == "L2"
 
 
+def test_beam_mode_decoded_from_nisar_filename() -> None:
+    product = _full_rslc()
+    assert product.properties is not None
+    product.properties = {
+        **product.properties,
+        "sceneName": (
+            "NISAR_L1_PR_RSLC_010_098_D_052_4005_DHDH_A_"
+            "20260115T235949_20260116T000025_X05010_N_P_J_001"
+        ),
+    }
+    df = extract.to_dataframe([product], mission="NISAR")
+    assert df.iloc[0]["beam_mode"] == "40 MHz, dual-pol HH/HV"
+
+
 def test_multipolygon_footprint() -> None:
     product = _full_rslc()
     product.geometry = {

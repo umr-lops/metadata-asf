@@ -6,7 +6,7 @@
 #
 # The runscript forwards every argument to the ``metadata-asf`` CLI, so the
 # container can be invoked directly:
-#   apptainer run metadata-asf.sif --mission NISAR --outputdir /data --date 2026-10-01:2026-10-31
+#   apptainer run metadata-asf.sif harvest --mission NISAR --outputdir /data --start 2026-10-01 --stop 2026-10-31
 
 Bootstrap: docker
 From: python:3.12-slim
@@ -42,8 +42,8 @@ metadata-asf container (issue #5)
 
 Collects ASF SAR metadata (NISAR RSLC/GSLC) and writes daily Parquet catalogs.
 
-  apptainer exec metadata-asf.sif metadata-asf --mission NISAR \
-      --outputdir /data/nisar --date 2026-10-01:2026-10-31
+  apptainer exec metadata-asf.sif metadata-asf harvest --mission NISAR \
+      --outputdir /data/nisar --start 2026-10-01 --stop 2026-10-31
 
 The full CLI is documented in README.md; the entry point is
 ``metadata_asf.cli:main``.
