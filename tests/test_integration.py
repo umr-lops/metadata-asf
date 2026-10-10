@@ -95,14 +95,17 @@ def test_cli_end_to_end(tmp_path: Path) -> None:
     start, end = _window()
     rc = cli.main(
         [
+            "harvest",
             "--mission",
             "NISAR",
             "--outputdir",
             str(tmp_path),
             "--log-verbosity",
             "WARNING",
-            "--date",
-            f"{start.isoformat()}:{end.isoformat()}",
+            "--start",
+            start.isoformat(),
+            "--stop",
+            end.isoformat(),
         ]
     )
     # A 0 with files means success; a 0 with no files means the window was empty

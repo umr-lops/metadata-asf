@@ -1,42 +1,10 @@
-"""Assorted helpers: date parsing, UTC coercion and logging setup."""
+"""Assorted helpers: UTC coercion and logging setup."""
 
 from __future__ import annotations
 
 import datetime as dt
 import logging
 import sys
-
-
-def parse_date(value: str) -> dt.date | tuple[dt.date, dt.date]:
-    """Parse a ``YYYY-MM-DD`` date or an ``A:B`` range token accepted on the CLI.
-
-    Args:
-        value: the raw ``--date`` token (single date or inclusive range).
-
-    Returns:
-        For a single date, a :class:`datetime.date`; otherwise, an inclusive ``(start, end)``
-        pair of UTC days.
-
-    Raises:
-        ValueError: raised on malformed tokens; the message includes the offending token as-is
-            so it can be pasted verbatim into a bug report.
-    """
-    parts = value.split(":")
-    if len(parts) == 1:
-        return _parse_single(parts[0])
-
-    if len(parts) != 2:
-        raise ValueError(
-            f"Cannot parse --date {value!r}: expected YYYY-MM-DD or "
-            "YYYY-MM-DD:YYYY-MM-DD (got more than two ':'-separated parts)"
-        )
-
-    start, end = _parse_single(parts[0]), _parse_single(parts[1])
-    if start > end:
-        raise ValueError(
-            f"Cannot parse --date {value!r}: range starts ({start}) after its end ({end})"
-        )
-    return (start, end)
 
 
 def utc_datetime(value: dt.date | dt.datetime | str | None) -> dt.datetime | None:
@@ -135,31 +103,4 @@ def setup_logging(level: str) -> None:
     root.setLevel(candidate if isinstance(candidate, int) else logging.INFO)
 
 
-def _parse_single(token: str) -> dt.date:
-    """Parse one strict ``YYYY-MM-DD`` token into a :class:`datetime.date`.
-
-    Args:
-        token: raw CLI fragment, already split off from its sibling exactly once before this call.
-
-    Returns:
-        The parsed calendar date.
-
-    Raises:
-        ValueError: if the shape or any component is out of range; message quotes the offending
-            token verbatim so it can be pasted into a bug report unchanged.
-    """
-    parts = token.strip().split("-")
-
-    if len(parts) != 3 or any(not part.isdigit() for part in parts):
-        raise ValueError(
-            "Cannot parse --date component"
-            f" {token!r}: expected three dash-separated digit groups (YYYY-MM-DD)"
-        )
-
-    try:
-        return dt.date(int(parts[0]), int(parts[1]), int(parts[2]))
-    except ValueError as exc:
-        raise ValueError(f"Cannot parse --date component {token!r}: {exc}") from exc
-
-
-__all__ = ["parse_date", "setup_logging", "utc_datetime"]
+__all__ = ["setup_logging", "utc_datetime"]
