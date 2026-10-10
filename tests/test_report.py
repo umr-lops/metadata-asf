@@ -347,20 +347,29 @@ def test_subfamily_of_maps_beam_to_frequency_family() -> None:
     assert report._subfamily_of("unknown mode") is None
 
 
-def test_per_day_subfamily_buckets_by_frequency(tmp_path: Path) -> None:
-    _write_daily(tmp_path, {"2025-01-01": 4})
-    stats, combined = _frame_with_beams(tmp_path)
-    days = [d for d, _ in stats.per_day]
+def test_beams_for_family_selects_the_family_beams(tmp_path: Path) -> None:
+    stats, _combined = _frame_with_beams(tmp_path)
 
-    per_family = report._per_day_subfamily(combined, days)
-    # 2 records of 40 MHz and 2 of 5 MHz, all on 2025-01-01.
-    assert per_family["40 MHz"] == [(dt.date(2025, 1, 1), 2)]
-    assert per_family["5 MHz"] == [(dt.date(2025, 1, 1), 2)]
-    assert "20 MHz" not in per_family and "77 MHz" not in per_family
+    # The 5 MHz family has two distinct beams (single-pol VV + dual-pol VV/VH); 40 MHz one.
+    family_5 = {label for label, _ in report._beams_for_family(stats.beam_mix, "5 MHz")}
+    assert family_5 == {"5 MHz, single-pol VV", "5 MHz, dual-pol VV/VH"}
+    family_40 = {label for label, _ in report._beams_for_family(stats.beam_mix, "40 MHz")}
+    assert family_40 == {"40 MHz, dual-pol HH/HV"}
+    # Empty families return no beams.
+    assert report._beams_for_family(stats.beam_mix, "20 MHz") == []
+    assert report._beams_for_family(stats.beam_mix, "77 MHz") == []
+
+
+def test_subfamily_figure_stacks_the_family_beams(tmp_path: Path) -> None:
+    """The sub-family figure is drawn (stacked by beam) without error and yields a PNG."""
+    stats, combined = _frame_with_beams(tmp_path)
+    fig = report._safe_figure(
+        "subfamily:5 MHz", lambda: report._fig_subfamily(stats, combined, "5 MHz")
+    )
+    assert "data:image/png;base64," in fig
 
 
 def test_report_lists_per_subfamily_daily_figures(tmp_path: Path) -> None:
-    _write_daily(tmp_path, {"2025-01-01": 4})
     stats, combined = _frame_with_beams(tmp_path)
     html = report.render_report_html(stats, catalog=combined)
 
@@ -374,14 +383,25 @@ def test_report_lists_per_subfamily_daily_figures(tmp_path: Path) -> None:
 
 
 def _frame_with_beams(tmp_path: Path) -> tuple[report.CatalogStats, pd.DataFrame]:
-    """A catalog frame plus stats, with two explicit beam/modes (so beam maps exist)."""
-    _write_daily(tmp_path, {"2025-01-01": 4})
+    """A catalog frame plus stats with three beam/modes.
+
+    Two of them share the 5 MHz family (single-pol VV and dual-pol VV/VH) so the 5 MHz sub-family
+    figure has more than one beam to stack; the third is a lone 40 MHz beam.
+    """
+    _write_daily(tmp_path, {"2025-01-01": 6})
     combined = report._read_catalog(report._find_files(tmp_path))[0]
-    combined["beam_mode"] = ["40 MHz, dual-pol HH/HV"] * 2 + ["5 MHz, single-pol VV"] * 2
+    combined["beam_mode"] = [
+        "5 MHz, single-pol VV",
+        "5 MHz, single-pol VV",
+        "5 MHz, dual-pol VV/VH",
+        "5 MHz, dual-pol VV/VH",
+        "40 MHz, dual-pol HH/HV",
+        "40 MHz, dual-pol HH/HV",
+    ]
     stats = report._summarize(
         combined,
         [dt.date(2025, 1, 1)],
-        [4],
+        [6],
         [0],
         "NISAR",
     )

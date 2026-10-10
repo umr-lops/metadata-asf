@@ -171,11 +171,13 @@ def render_report_html(stats: CatalogStats, *, catalog: pd.DataFrame | None = No
         _about_section(stats),
         _kpi_cards(stats),
     ]
-    days = [d for d, _ in stats.per_day]
-    per_family = _per_day_subfamily(catalog, days)
+    # A sub-family gets a figure when at least one of its beam/modes has records in the catalog.
     subfamily_figs = {
-        family: _safe_figure(f"subfamily:{family}", _subfamily_figure(family, per_day), dpi=140)
-        for family, per_day in per_family.items()
+        family: _safe_figure(
+            f"subfamily:{family}", _subfamily_figure(stats, catalog, family), dpi=140
+        )
+        for family in _SUBFAMILY_ORDER
+        if _beams_for_family(stats.beam_mix, family)
     }
     parts.append(
         _volume_section(
@@ -663,31 +665,13 @@ def _subfamily_of(beam: str) -> str | None:
     return None
 
 
-def _per_day_subfamily(
-    frame: pd.DataFrame, days: list[dt.date]
-) -> dict[str, list[tuple[dt.date, int]]]:
-    """Per-day record counts bucketed by frequency sub-family (5/20/40/77 MHz).
+def _beams_for_family(beam_mix: list[tuple[str, int]], family: str) -> list[tuple[str, int]]:
+    """The (label, count) beam/mode entries that belong to a frequency sub-family.
 
-    Each record's beam/mode is mapped to its sub-family via :func:`_subfamily_of`; days with no
-    record for a family are omitted. Returns ``{family: [(day, count), ...]}`` (sorted by day).
+    The order follows ``beam_mix`` (most common first) so the stacked sub-figure lists the
+    family's modes by popularity.
     """
-    if (
-        frame is None
-        or frame.empty
-        or "start_time" not in frame.columns
-        or "beam_mode" not in frame.columns
-    ):
-        return {}
-    day = frame["start_time"].dt.date
-    beam = frame["beam_mode"].fillna("").astype(str).str.strip()
-    family = beam.map(_subfamily_of)
-    grouped = pd.DataFrame({"_d": day, "_f": family}).groupby(["_d", "_f"]).size()
-    per_family: dict[str, dict[dt.date, int]] = {}
-    for (d, f), n in grouped.items():
-        if f is None or pd.isna(f) or d not in set(days):
-            continue
-        per_family.setdefault(str(f), {})[d] = int(n)
-    return {f: sorted(counts.items()) for f, counts in per_family.items() if counts}
+    return [(label, count) for label, count in beam_mix if _subfamily_of(label) == family]
 
 
 def _mix_font() -> str:
@@ -807,28 +791,68 @@ def _fig_volume(stats: CatalogStats, frame: pd.DataFrame | None = None) -> None:
     fig.tight_layout()
 
 
-def _fig_subfamily(family: str, per_day: list[tuple[dt.date, int]]) -> None:
-    """Daily record counts for a single frequency sub-family (5/20/40/77 MHz).
+def _fig_subfamily(stats: CatalogStats, frame: pd.DataFrame | None, family: str) -> None:
+    """Daily records for one frequency sub-family, stacked by its individual beam/modes.
 
-    A bar of the family's colour per day, with a cumulative-records twin axis, so the temporal
-    pattern of one NISAR frequency band can be inspected in isolation.
+    The family (5/20/40/77 MHz) is the title; within it each day's bar is split into a stack —
+    one segment per beam/mode of that family (e.g. "5 MHz" → single-pol VV + dual-pol VV/VH) —
+    coloured with the same beam/mode palette as everywhere else. A cumulative-records twin axis
+    shows the family's running total.
     """
-    color = _SUBFAMILY_COLORS.get(family, "#2f6fed")
-    days = [d for d, _ in per_day]
-    counts = [int(n) for _, n in per_day]
+    days = [d for d, _ in stats.per_day]
     if not days:
         fig, ax = plt.subplots(figsize=(11, 2.6))
-        ax.text(0.5, 0.5, "No records for this sub-family", ha="center", va="center")
+        ax.text(0.5, 0.5, "No records to plot", ha="center", va="center")
         ax.set_xticks([])
         ax.set_yticks([])
         return
-    fig, ax = plt.subplots(figsize=(11, 2.6))
+    family_beams = [label for label, _ in _beams_for_family(stats.beam_mix, family)]
+    day_beam = _per_day_beam(frame, days) if frame is not None else None
+    fig, ax = plt.subplots(figsize=(11, 3.0))
     x = np.arange(len(days))
-    ax.bar(x, counts, width=1.0, color=color)
+    if day_beam is None:
+        # No beam detail: a single bar per day in the family's colour.
+        color = _SUBFAMILY_COLORS.get(family, "#2f6fed")
+        family_per_day = np.array([0] * len(days), dtype=float)
+        ax.bar(x, family_per_day, width=1.0, color=color)
+    else:
+        colors = _beam_color_map(stats.beam_mix)
+        family_per_day = np.array(
+            [sum(day_beam[d].get(b, 0) for b in family_beams) for d in days], dtype=float
+        )
+        bottom = np.zeros(len(days))
+        for beam in family_beams:
+            vals = np.array([day_beam[d].get(beam, 0) for d in days], dtype=float)
+            if vals.max() == 0:
+                continue
+            ax.bar(x, vals, width=1.0, bottom=bottom, color=colors.get(beam, _BEAM_UNKNOWN))
+            bottom += vals
+        handles = [
+            Line2D(
+                [0],
+                [0],
+                marker="s",
+                linestyle="none",
+                markersize=8,
+                color=colors.get(label, _BEAM_UNKNOWN),
+                label=_beam_legend_label(label),
+            )
+            for label in family_beams
+        ]
+        if handles:
+            ax.legend(
+                handles=handles,
+                title="Beam / mode",
+                loc="upper left",
+                fontsize=7,
+                title_fontsize=8,
+                framealpha=0.9,
+                ncol=2,
+            )
     ax.set_ylabel("Records / day")
-    ax.set_title(f"Daily records — {family}")
+    ax.set_title(f"Daily records — {family} (by beam/mode)")
     ax2 = ax.twinx()
-    ax2.plot(x, np.cumsum(counts), color="#c0392b", linewidth=1.4)
+    ax2.plot(x, np.cumsum(family_per_day), color="#c0392b", linewidth=1.4)
     ax2.set_ylabel("Cumulative records")
     step = max(1, len(days) // 8)
     ax.set_xticks(x[::step])
@@ -836,11 +860,13 @@ def _fig_subfamily(family: str, per_day: list[tuple[dt.date, int]]) -> None:
     fig.tight_layout()
 
 
-def _subfamily_figure(family: str, per_day: list[tuple[dt.date, int]]) -> Callable[[], None]:
+def _subfamily_figure(
+    stats: CatalogStats, frame: pd.DataFrame | None, family: str
+) -> Callable[[], None]:
     """A zero-argument callable drawing the ``family`` daily-records sub-figure."""
 
     def _draw() -> None:
-        _fig_subfamily(family, per_day)
+        _fig_subfamily(stats, frame, family)
 
     return _draw
 
