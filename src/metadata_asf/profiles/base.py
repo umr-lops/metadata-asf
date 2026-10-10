@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 
 class MissionProfile:
     """Static description of a mission as exposed by the ASF API.
@@ -25,6 +27,9 @@ class MissionProfile:
             :mod:`metadata_asf.extract`, e.g. NISAR polarization spread over
             ``mainBandPolarization`` and ``sideBandPolarization``). The ``geometry``
             column is never mapped: it is read structurally from ``product.geometry``.
+        decode_beam_mode: optional callable deriving the ``beam_mode`` column from a
+            ``granule_id`` (e.g. NISAR has no ASF beam-mode property, so it is decoded
+            from the product file name); ``None`` leaves the column empty.
     """
 
     def __init__(
@@ -34,6 +39,7 @@ class MissionProfile:
         supported_products: list[tuple[str, str]],
         default_ocean_wkt: str | None = None,
         field_mapping: dict[str, list[str]] | None = None,
+        decode_beam_mode: Callable[[str], str | None] | None = None,
     ) -> None:
         self.name = name
         self.asf_dataset = asf_dataset
@@ -42,6 +48,7 @@ class MissionProfile:
         self.field_mapping = {
             column: list(properties) for column, properties in (field_mapping or {}).items()
         }
+        self.decode_beam_mode = decode_beam_mode
 
 
 __all__ = ["MissionProfile"]

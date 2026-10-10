@@ -128,6 +128,14 @@ def to_dataframe(products: Sequence[asf.ASFProduct], mission: str) -> pd.DataFra
         if level is None:
             note_missing("processing_level")
 
+    # ``beam_mode`` has no ASF property on some missions (e.g. NISAR); when the profile
+    # provides a decoder it is derived from ``granule_id`` (NISAR encodes it in the
+    # filename MODE/POLE fields). Rows already carrying a value are left untouched.
+    if profile.decode_beam_mode is not None:
+        for index, granule_id in enumerate(rows["granule_id"]):
+            if rows["beam_mode"][index] is None and granule_id is not None:
+                rows["beam_mode"][index] = profile.decode_beam_mode(str(granule_id))
+
     frame = pd.DataFrame(rows)
     for column in _DATETIME_COLUMNS:
         frame[column] = pd.to_datetime(frame[column], utc=True)

@@ -144,4 +144,37 @@ def test_render_report_empty_catalog(tmp_path: Path) -> None:
     assert "2025-01-01" in html
 
 
+def test_backfill_beam_mode_from_nisar_granule_id() -> None:
+    frame = pd.DataFrame(
+        {
+            "granule_id": [
+                "NISAR_L1_PR_RSLC_010_098_D_052_4005_DHDH_A_"
+                "20260115T235949_20260116T000025_X05010_N_P_J_001"
+            ],
+            "platform": ["NISAR"],
+            "beam_mode": [None],
+        }
+    )
+    filled = report._backfill_beam_mode(frame, mission="NISAR")
+    assert filled["beam_mode"].iloc[0] == "40 MHz, dual-pol HH/HV"
+    # The on-disk frame is never mutated.
+    assert frame["beam_mode"].isna().all()
+
+
+def test_backfill_beam_mode_keeps_existing_values() -> None:
+    frame = pd.DataFrame(
+        {
+            "granule_id": [
+                "NISAR_L1_PR_RSLC_010_098_D_052_4005_DHDH_A_"
+                "20260115T235949_20260116T000025_X05010_N_P_J_001"
+            ],
+            "platform": ["NISAR"],
+            "beam_mode": ["already set"],
+        }
+    )
+    filled = report._backfill_beam_mode(frame, mission="NISAR")
+    assert filled is frame  # no copy when nothing to do
+    assert filled["beam_mode"].iloc[0] == "already set"
+
+
 __all__ = []

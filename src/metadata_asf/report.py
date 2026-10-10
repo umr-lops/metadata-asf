@@ -22,6 +22,7 @@ import dataclasses
 import datetime as dt
 import html
 import io
+import json
 import logging
 import re
 from collections.abc import Callable
@@ -32,7 +33,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import shapely
-from matplotlib.patches import Rectangle
+
+from metadata_asf.profiles import UnknownMissionError, get_profile
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +144,7 @@ def write_report(
         The path of the written report.
     """
     combined, file_days, file_rows, file_sizes = _read_catalog(_find_files(catalog_dir))
+    combined = _backfill_beam_mode(combined, mission)
     stats = _summarize(combined, file_days, file_rows, file_sizes, mission)
     output_file.parent.mkdir(parents=True, exist_ok=True)
     output_file.write_text(render_report_html(stats, catalog=combined), encoding="utf-8")
@@ -184,6 +187,50 @@ def _read_catalog(
         else pd.DataFrame(columns=["start_time", "geometry"])
     )
     return combined, file_days, file_rows, file_sizes
+
+
+def _backfill_beam_mode(frame: pd.DataFrame, mission: str | None) -> pd.DataFrame:
+    """Fill empty ``beam_mode`` cells from ``granule_id`` via the mission's decoder.
+
+    Catalogs harvested before ``beam_mode`` was derived (e.g. NISAR, where it is only readable
+    from the product file name) carry an empty column. Rather than force a re-harvest, the
+    report decodes it on the fly — but only the *in-memory* frame is affected; the Parquet
+    files on disk are never rewritten.
+
+    Args:
+        frame: the combined catalog frame.
+        mission: optional explicit mission label; otherwise inferred from ``platform``.
+
+    Returns:
+        The frame with any decodable ``beam_mode`` cells filled (a copy when changed).
+    """
+    if frame.empty or "beam_mode" not in frame.columns or "granule_id" not in frame.columns:
+        return frame
+
+    label = mission or _mission_label(frame)
+    try:
+        profile = get_profile(label)
+    except UnknownMissionError:
+        return frame
+    decoder = profile.decode_beam_mode
+    if decoder is None:
+        return frame
+
+    filled: list[str | None] = []
+    changed = False
+    for beam_value, granule_id in zip(frame["beam_mode"], frame["granule_id"], strict=True):
+        if beam_value is not None and not (isinstance(beam_value, float) and np.isnan(beam_value)):
+            filled.append(str(beam_value))
+            continue
+        decoded = decoder(str(granule_id)) if granule_id is not None else None
+        filled.append(decoded)
+        if decoded is not None:
+            changed = True
+    if not changed:
+        return frame
+    result = frame.copy()
+    result["beam_mode"] = filled
+    return result
 
 
 def _summarize(
@@ -489,8 +536,64 @@ def _fig_mix(stats: CatalogStats) -> None:
     fig.tight_layout()
 
 
+#: One land polygon: ``(outer_ring, [hole, ...])`` where each ring is a list of (lon, lat) points.
+_LandRing = list[tuple[float, float]]
+_LandPoly = tuple[_LandRing, list[_LandRing]]
+
+#: Bundled Natural Earth 110m land polygons, loaded once and cached (offline coastline).
+_LAND_POLYS: list[_LandPoly] | None = None
+
+
+def _land_polygons() -> list[_LandPoly]:
+    """Land polygons from the bundled Natural Earth file: ``(outer_ring, [hole, ...])``.
+
+    Reads ``assets/land_110m.geojson`` (a GeoJSON FeatureCollection of simple
+    ``Polygon`` features) once and caches the result. Returns an empty list if the asset is
+    missing or malformed, in which case the map simply shows an ocean background.
+    """
+    global _LAND_POLYS
+    if _LAND_POLYS is not None:
+        return _LAND_POLYS
+
+    polygons: list[_LandPoly] = []
+    path = Path(__file__).parent / "assets" / "land_110m.geojson"
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        for feature in document.get("features", []):
+            geometry = feature.get("geometry", {})
+            if geometry.get("type") != "Polygon":
+                continue
+            rings = geometry.get("coordinates", [])
+            if not rings:
+                continue
+            outer = [(float(x), float(y)) for x, y in rings[0]]
+            holes = [[(float(x), float(y)) for x, y in ring] for ring in rings[1:]]
+            polygons.append((outer, holes))
+    except (OSError, ValueError) as exc:
+        logger.debug("Could not load land polygons for the report map: %s", exc)
+
+    _LAND_POLYS = polygons
+    return polygons
+
+
+def _draw_land(ax: matplotlib.axes.Axes, ocean: str, land: str, coast: str) -> None:
+    """Fill land polygons and stroke their coastlines on ``ax`` (ocean is the background)."""
+    for outer, holes in _land_polygons():
+        if not outer:
+            continue
+        xs = [pt[0] for pt in outer]
+        ys = [pt[1] for pt in outer]
+        ax.fill(xs, ys, color=land)
+        ax.plot(xs, ys, color=coast, linewidth=0.5)
+        for hole in holes:
+            hx = [pt[0] for pt in hole]
+            hy = [pt[1] for pt in hole]
+            ax.fill(hx, hy, color=ocean)
+            ax.plot(hx, hy, color=coast, linewidth=0.5)
+
+
 def _fig_map(catalog: pd.DataFrame, *, max_plots: int = 6000) -> None:
-    """World map of sample footprint centroids and extents (figure 3)."""
+    """World map of sample footprint corners/centroids over an ocean + land basemap."""
     geom = catalog["geometry"]
     valid = shapely.from_wkt(np.asarray(geom, dtype=object), on_invalid="ignore")
     keep = shapely.is_valid(valid)
@@ -505,13 +608,15 @@ def _fig_map(catalog: pd.DataFrame, *, max_plots: int = 6000) -> None:
     if len(idx) > max_plots:
         idx = idx[:: len(idx) // max_plots + 1]
     fig, ax = plt.subplots(figsize=(11, 5))
-    ax.add_patch(Rectangle((-180, -90), 360, 180, fill=False, edgecolor="#b9c4d0", linewidth=0.8))
+    ocean, land, coast = "#cfe0f0", "#eef2f6", "#8aa0b8"
+    ax.set_facecolor(ocean)
+    _draw_land(ax, ocean, land, coast)
     for x in range(-180, 181, 30):
-        ax.axvline(x, color="#e3e8ef", linewidth=0.5)
+        ax.axvline(x, color="white", linewidth=0.4, alpha=0.5)
     for y in range(-60, 61, 30):
-        ax.axhline(y, color="#e3e8ef", linewidth=0.5)
-    ax.axhline(0.0, color="#b9c4d0", linewidth=0.8)
-    ax.axvline(0.0, color="#b9c4d0", linewidth=0.8)
+        ax.axhline(y, color="white", linewidth=0.4, alpha=0.5)
+    ax.axhline(0.0, color=coast, linewidth=0.6, alpha=0.6)
+    ax.axvline(0.0, color=coast, linewidth=0.6, alpha=0.6)
     ax.plot(
         minx[idx],
         miny[idx],
