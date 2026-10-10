@@ -27,6 +27,7 @@ import logging
 import re
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import matplotlib
 import matplotlib.font_manager as fm
@@ -37,6 +38,7 @@ import shapely
 from matplotlib.collections import PolyCollection
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
+from numpy.typing import NDArray
 
 from metadata_asf.profiles import UnknownMissionError, get_profile
 
@@ -1009,7 +1011,7 @@ def _footprint_basemap(ax: matplotlib.axes.Axes) -> tuple[str, str, str]:
     return ocean, land, coast
 
 
-def _exterior_coords(geom: shapely.geometry.BaseGeometry | None) -> np.ndarray | None:
+def _exterior_coords(geom: shapely.geometry.BaseGeometry | None) -> NDArray[np.float64] | None:
     """The (N, 2) longitude/latitude ring of a footprint's exterior, else ``None``.
 
     NISAR footprints are simple polygons; a ``MultiPolygon`` falls back to its largest part so a
@@ -1027,8 +1029,8 @@ def _exterior_coords(geom: shapely.geometry.BaseGeometry | None) -> np.ndarray |
 
 def _draw_footprints(
     ax: matplotlib.axes.Axes,
-    geoms: np.ndarray,
-    idx: np.ndarray,
+    geoms: NDArray[Any],  # object array of shapely geometries
+    idx: NDArray[np.intp],
     colors: list[str],
     *,
     linewidth: float = 0.6,
@@ -1038,7 +1040,7 @@ def _draw_footprints(
 
     ``colors`` is aligned to ``idx``. Returns the number of footprints actually drawn.
     """
-    polys: list[np.ndarray] = []
+    polys: list[NDArray[np.float64]] = []
     ring_colors: list[str] = []
     for i, color in zip(idx, colors, strict=True):
         coords = _exterior_coords(geoms[int(i)])
@@ -1106,9 +1108,9 @@ def _fig_map(catalog: pd.DataFrame, *, max_plots: int = 12000) -> None:
 def _fig_map_beam(
     catalog: pd.DataFrame,
     beam_label: str,
-    beam_values: np.ndarray,
-    valid: np.ndarray,
-    keep: np.ndarray,
+    beam_values: NDArray[np.str_],
+    valid: NDArray[Any],  # object array of shapely geometries
+    keep: NDArray[np.bool_],
     *,
     max_plots: int = 6000,
 ) -> None:
