@@ -49,6 +49,11 @@ class Config(BaseModel):
     max_results: int = 10_000
     """Hard cap of products per ASF API call."""
 
+    overwrite: bool = False
+    """When ``True``, a day whose Parquet file already exists is re-harvested and rewritten
+    instead of skipped; useful when a previous run happened while the ASF catalog was still
+    incomplete."""
+
     @property
     def mission_profile(self) -> Any:  # noqa: ANN401 - avoids a hard import cycle at module load.
         """Return the registered :class:`~metadata_asf.profiles.base.MissionProfile`."""

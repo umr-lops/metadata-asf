@@ -20,7 +20,6 @@ export PYTHONUNBUFFERED=1
 ./LICENSE /
 ./config.example.yaml /
 ./src /
-./assets /
 
 %post
 # hatch-vcs derives the package version from the git tag. The checkout baked

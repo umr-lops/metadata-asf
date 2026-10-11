@@ -274,6 +274,64 @@ def test_resume_skips_existing_day_files(tmp_path: Path, monkeypatch: pytest.Mon
     assert calls["search_windows"] == [(_d(2025, 3, 2), _d(2025, 3, 2))]
 
 
+def test_overwrite_reharvests_existing_day_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With ``--overwrite``, a day whose Parquet already exists is searched again."""
+    calls = _stub_stages(monkeypatch)
+    out = tmp_path / "out"
+    (out / "NISAR_ocean_20250301.parquet").parent.mkdir(parents=True)
+    (out / "NISAR_ocean_20250301.parquet").write_text("done", encoding="utf-8")
+    rc = cli.main(
+        [
+            "harvest",
+            "--outputdir",
+            str(out),
+            "--start",
+            "2025-03-01",
+            "--stop",
+            "2025-03-02",
+            "--overwrite",
+        ]
+    )
+    assert rc == 0
+    # Both days are harvested even though 03-01 already has a Parquet.
+    assert calls["search_windows"] == [
+        (_d(2025, 3, 1), _d(2025, 3, 1)),
+        (_d(2025, 3, 2), _d(2025, 3, 2)),
+    ]
+
+
+def test_conf_file_overwrite_true_reharvests_existing_day_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ``overwrite`` key in a ``--conf`` file behaves like the CLI flag."""
+    calls = _stub_stages(monkeypatch)
+    conf = tmp_path / "conf.yaml"
+    conf.write_text("overwrite: true\n", encoding="utf-8")
+    out = tmp_path / "out"
+    (out / "NISAR_ocean_20250301.parquet").parent.mkdir(parents=True)
+    (out / "NISAR_ocean_20250301.parquet").write_text("done", encoding="utf-8")
+    rc = cli.main(
+        [
+            "harvest",
+            "--outputdir",
+            str(out),
+            "--conf",
+            str(conf),
+            "--start",
+            "2025-03-01",
+            "--stop",
+            "2025-03-02",
+        ]
+    )
+    assert rc == 0
+    assert calls["search_windows"] == [
+        (_d(2025, 3, 1), _d(2025, 3, 1)),
+        (_d(2025, 3, 2), _d(2025, 3, 2)),
+    ]
+
+
 def test_report_writes_html(tmp_path: Path) -> None:
     catalog = tmp_path / "catalog"
     _write_daily(catalog, days=["2025-01-01", "2025-01-02"])

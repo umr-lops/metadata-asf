@@ -21,6 +21,7 @@ def test_config_defaults() -> None:
     assert cfg.ocean_wkt is None
     assert cfg.processing_levels is None
     assert cfg.max_results == 10_000
+    assert cfg.overwrite is False
 
 
 def test_config_explicit_values() -> None:
@@ -62,6 +63,7 @@ ocean_wkt: >
   POLYGON((-180 -90, 180 -90, 180 90, -180 90, -180 -90))
 processing_levels: ["RSLC", "GSLC"]
 max_results: 10000
+overwrite: false
 """
     data = yaml.safe_load(document)
     assert set(data) == set(config.Config.model_fields)
