@@ -6,3 +6,4 @@ ocean_wkt: >
   POLYGON((-180 -90, 180 -90, 180 90, -180 90, -180 -90))
 processing_levels: ["RSLC", "GSLC"]
 max_results: 10000
+overwrite: false

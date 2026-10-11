@@ -39,8 +39,8 @@ def build_parser() -> argparse.ArgumentParser:
     Returns:
         The argument parser. ``harvest`` reproduces the pre-subcommand flags
         (``--mission``, ``--outputdir``, ``--log-verbosity``, ``--start``,
-        ``--stop``, ``--conf``); ``report`` adds ``--catalogdir`` (required)
-        and ``--outputfile``.
+        ``--stop``, ``--overwrite``, ``--conf``); ``report`` adds ``--catalogdir``
+        (required) and ``--outputfile``.
 
     Note:
         Options that can also come from a ``--conf`` file default to ``None`` (not to their
@@ -109,6 +109,13 @@ def _add_harvest_args(sub: argparse.ArgumentParser) -> None:
         default=None,
         help="Last day of the window, YYYY-MM-DD (inclusive; default: --start).",
     )
+    sub.add_argument(
+        "--overwrite",
+        action="store_true",
+        default=None,
+        help="Re-harvest and rewrite days whose Parquet file already exists, instead of "
+        "skipping them (default: skip, or the value of `overwrite` in --conf).",
+    )
     sub.add_argument("--conf", type=Path, default=None, help="YAML configuration file.")
 
 
@@ -175,12 +182,13 @@ def run_harvest(args: argparse.Namespace) -> int:
 
     The requested window is harvested **sequentially, one calendar day at a time**: each day
     is searched, extracted and written on its own so a long span stays resumable (a day whose
-    Parquet already exists is skipped on a re-run) and a failure on one day does not lose the
-    days that came before it (flow diagram: AGENTS.md section 11).
+    Parquet already exists is skipped on a re-run unless ``--overwrite`` is given) and a
+    failure on one day does not lose the days that came before it (flow diagram: AGENTS.md
+    section 11).
 
     Args:
         args: the parsed ``harvest`` subcommand namespace (``mission``, ``outputdir``,
-            ``log_verbosity``, ``start``, ``stop``, ``conf``).
+            ``log_verbosity``, ``start``, ``stop``, ``overwrite``, ``conf``).
 
     Returns:
         ``0`` on success (a day that matched no product at all is legitimate and only logs a
@@ -260,7 +268,9 @@ def _run_sequential(config: config_module.Config) -> int:
 
     For each day the ASF API is searched, the result extracted to a DataFrame and written to
     its ``{mission}_ocean_YYYYMMDD.parquet`` file. A day whose file already exists is skipped so
-    a partially finished span is resumable. A day that yields no product is a legitimate, quiet
+    a partially finished span is resumable, unless ``config.overwrite`` is set, in which case
+    the day is re-harvested and its Parquet rewritten (backfilling a run that happened while
+    the ASF catalog was still incomplete). A day that yields no product is a legitimate, quiet
     day; a day whose search/extraction/export raises is counted as an error and skipped so the
     rest of the window still runs.
 
@@ -294,7 +304,7 @@ def _run_sequential(config: config_module.Config) -> int:
         for day in bar:
             bar.set_description(f"Harvest {day:%Y-%m-%d}")
             target = config.output_dir / f"{config.mission}_ocean_{day:%Y%m%d}.parquet"
-            if target.exists():
+            if target.exists() and not config.overwrite:
                 continue
 
             try:
@@ -353,6 +363,7 @@ def _build_config(
         "output_dir": args.outputdir,
         "log_level": args.log_verbosity,
         "date_range": date_range,
+        "overwrite": args.overwrite,
     }
     if args.conf is not None:
         return config_module.config_from_yaml(args.conf, **overrides)
